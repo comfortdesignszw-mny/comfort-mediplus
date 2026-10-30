@@ -65,6 +65,8 @@ export const ProfileSettingsView: React.FC = () => {
   const resubscribeAlerts = useAppStore(s => s.resubscribeAlerts);
   const updateSubscription = useAppStore(s => s.updateSubscription);
   const cancelSubscriptionAutoRenewal = useAppStore(s => s.cancelSubscriptionAutoRenewal);
+  const submitEcoCashSubscription = useAppStore(s => s.submitEcoCashSubscription);
+  const subscriptionRequests = useAppStore(s => s.subscriptionRequests);
 
   const [activeTab, setActiveTab] = useState<'profile' | 'subscription' | 'communications' | 'emergency' | 'security' | 'audit_whatsapp'>('profile');
   const [selectedTierForRenewalModal, setSelectedTierForRenewalModal] = useState<SubscriptionTier>('pro');
@@ -75,6 +77,59 @@ export const ProfileSettingsView: React.FC = () => {
   const [legalModalTab, setLegalModalTab] = useState<'privacy' | 'terms' | 'rights' | 'dmca'>('privacy');
   const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // EcoCash Paid Subscription Form State
+  const [ecoTier, setEcoTier] = useState<'medi_pro' | 'family_clinic_pro'>('medi_pro');
+  const [ecoName, setEcoName] = useState(userProfile.fullName || '');
+  const [ecoPhone, setEcoPhone] = useState(userProfile.phoneNumber || '');
+  const [ecoTxId, setEcoTxId] = useState('');
+  const [ecoConfirmationMsg, setEcoConfirmationMsg] = useState('');
+  const [ecoProofScreenshot, setEcoProofScreenshot] = useState<string | null>(null);
+  const [isSubmittingEco, setIsSubmittingEco] = useState(false);
+
+  const handleEcoScreenshotUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 5 * 1024 * 1024) {
+        showToast('Image file size must be less than 5MB', 'error');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setEcoProofScreenshot(event.target?.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleEcoSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!ecoTxId.trim() || !ecoConfirmationMsg.trim()) {
+      showToast('Please enter both your EcoCash Transaction ID and the Confirmation SMS Message', 'error');
+      return;
+    }
+    if (!ecoName.trim() || !ecoPhone.trim()) {
+      showToast('Please provide your full legal name and phone number', 'error');
+      return;
+    }
+
+    setIsSubmittingEco(true);
+    try {
+      await submitEcoCashSubscription({
+        tier: ecoTier,
+        fullName: ecoName.trim(),
+        phoneNumber: ecoPhone.trim(),
+        transactionId: ecoTxId.trim(),
+        confirmationMessage: ecoConfirmationMsg.trim(),
+        proofScreenshotUrl: ecoProofScreenshot || undefined,
+      });
+      setEcoTxId('');
+      setEcoConfirmationMsg('');
+      setEcoProofScreenshot(null);
+    } finally {
+      setIsSubmittingEco(false);
+    }
+  };
 
   // New Emergency Contact Form
   const [showAddContactModal, setShowAddContactModal] = useState(false);
@@ -625,6 +680,295 @@ export const ProfileSettingsView: React.FC = () => {
                 </div>
               </div>
             </div>
+          </div>
+
+          {/* ECOCASH PAID SUBSCRIPTION AREA (Medi+ Pro & Family and Clinic Pro) */}
+          <div className="rounded-3xl bg-white p-5 sm:p-6 border border-slate-200/90 shadow-sm space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-amber-500/10 text-amber-700 border border-amber-500/20 flex items-center justify-center shrink-0">
+                  <CreditCard className="w-6 h-6 text-amber-600" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900">
+                    EcoCash Paid Subscription &amp; Verification Area
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Pay via EcoCash Zimbabwe • Submit payment proof &amp; transaction ID for 30-Day Pro activation
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedTierForRenewalModal(ecoTier === 'family_clinic_pro' ? 'family_pro' : 'pro');
+                  setShowRenewalTermsModal(true);
+                }}
+                className="px-3.5 py-2 rounded-xl border border-teal-600 bg-teal-50 hover:bg-teal-100 text-teal-800 text-xs font-bold flex items-center gap-1.5 transition self-start sm:self-auto"
+              >
+                <RefreshCw className="w-3.5 h-3.5 text-teal-700" />
+                <span>Renewal Terms by Button</span>
+              </button>
+            </div>
+
+            {/* Active 30-Day Status or Pending Banner */}
+            {userProfile.subscriptionStatus === 'active' && (
+              <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-950 text-xs flex items-start justify-between gap-3">
+                <div className="flex items-start gap-2.5">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                  <div>
+                    <h4 className="font-bold text-sm text-emerald-900">
+                      🌟 30-Day Pro Subscription Active ({userProfile.subscriptionTier === 'family_pro' ? 'Family & Clinic Pro' : 'Medi+ Pro'})
+                    </h4>
+                    <p className="text-emerald-800 mt-0.5">
+                      Activated on: <strong>{userProfile.subscriptionActivatedAt ? new Date(userProfile.subscriptionActivatedAt).toLocaleDateString() : 'Active'}</strong> • Next renewal date: <strong>{userProfile.subscriptionRenewalDate || userProfile.subscriptionExpiresAt?.split('T')[0] || 'In 30 days'}</strong>
+                    </p>
+                    <p className="text-[11px] text-emerald-700 mt-1">
+                      Your account is verified across all devices. When the 30-day term concludes, your subscription will reset to prompt renewal.
+                    </p>
+                  </div>
+                </div>
+                <span className="px-2.5 py-1 rounded-full text-[10px] font-black bg-emerald-200 text-emerald-900 shrink-0">
+                  ACTIVE
+                </span>
+              </div>
+            )}
+
+            {userProfile.subscriptionStatus === 'pending' && (
+              <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-950 text-xs flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5 animate-pulse" />
+                <div>
+                  <h4 className="font-bold text-sm text-amber-900">
+                    ⏳ EcoCash Payment Proof Submitted (Pending Admin Verification)
+                  </h4>
+                  <p className="text-amber-800 mt-0.5">
+                    Your EcoCash payment details (Tx ID: <strong>{userProfile.pendingSubscriptionRequest?.ecocashTransactionId || 'Logged'}</strong>) are currently being verified by the Super Admin in the EcoCash Subscriptions Queue. Once approved, your account will immediately unlock for 30 days.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* EcoCash Step-by-Step Payment Instructions */}
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-xs space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-800 block">
+                  EcoCash USSD Payment Instructions (Zimbabwe)
+                </span>
+                <span className="text-[10px] text-teal-800 font-semibold bg-teal-50 px-2 py-0.5 rounded-full border border-teal-200">
+                  Dial Directly from Phone
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Pro Subscription USSD */}
+                <div className={`p-3.5 rounded-2xl border transition ${
+                  ecoTier === 'medi_pro' 
+                    ? 'bg-teal-50/70 border-teal-500 ring-2 ring-teal-500/20' 
+                    : 'bg-white border-slate-200'
+                }`}>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black uppercase text-teal-800">
+                      Comfort Medi+ Pro ($5)
+                    </span>
+                    <span className="text-[10px] text-slate-500 font-bold">$5.00 / 30 Days</span>
+                  </div>
+                  <div className="mt-1.5 p-2 rounded-xl bg-slate-900 text-teal-400 font-mono font-bold text-sm tracking-wide flex items-center justify-between">
+                    <span>*151*1*1*0772824132*5#</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard?.writeText('*151*1*1*0772824132*5#');
+                        showToast('Copied USSD: *151*1*1*0772824132*5#', 'success');
+                      }}
+                      className="text-[10px] bg-teal-500/20 hover:bg-teal-500/30 text-teal-300 px-2 py-0.5 rounded transition"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-1.5">
+                    Dial this USSD code on your EcoCash registered mobile to send $5 directly to Comfort Medi+.
+                  </p>
+                </div>
+
+                {/* Family Clinic Pro USSD */}
+                <div className={`p-3.5 rounded-2xl border transition ${
+                  ecoTier === 'family_clinic_pro' 
+                    ? 'bg-purple-50/70 border-purple-500 ring-2 ring-purple-500/20' 
+                    : 'bg-white border-slate-200'
+                }`}>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black uppercase text-purple-800">
+                      Family Clinic Pro ($10)
+                    </span>
+                    <span className="text-[10px] text-slate-500 font-bold">$10.00 / 30 Days</span>
+                  </div>
+                  <div className="mt-1.5 p-2 rounded-xl bg-slate-900 text-purple-300 font-mono font-bold text-sm tracking-wide flex items-center justify-between">
+                    <span>*151*1*1*0772824132*10#</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard?.writeText('*151*1*1*0772824132*10#');
+                        showToast('Copied USSD: *151*1*1*0772824132*10#', 'success');
+                      }}
+                      className="text-[10px] bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 px-2 py-0.5 rounded transition"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-1.5">
+                    Dial this USSD code on your EcoCash registered mobile to send $10 directly to Comfort Medi+.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-600 pt-1 border-t border-slate-200/60">
+                <div className="flex items-center gap-1.5">
+                  <span className="font-semibold text-slate-800">EcoCash Recipient:</span>
+                  <span className="font-mono font-bold text-slate-900">0772824132</span>
+                  <span className="text-slate-500">(Comfort Medi+ Services)</span>
+                </div>
+                <span className="text-[10px] text-slate-400">After dialling, take a screenshot of confirmation SMS to upload below</span>
+              </div>
+            </div>
+
+            {/* EcoCash Proof Submission Form */}
+            <form onSubmit={handleEcoSubmit} className="space-y-3.5 text-xs pt-1">
+              <div>
+                <label className="font-bold text-slate-800 block mb-1">Select Subscription Package *</label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <label
+                    onClick={() => setEcoTier('medi_pro')}
+                    className={`p-3 rounded-2xl border cursor-pointer flex items-center justify-between transition ${
+                      ecoTier === 'medi_pro' ? 'border-teal-600 bg-teal-50/50 ring-2 ring-teal-500/20' : 'border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div>
+                      <span className="font-black text-slate-900 block text-xs">Comfort Medi+ Pro</span>
+                      <span className="text-[11px] text-slate-500">Individual automated WhatsApp reminders &amp; AI</span>
+                    </div>
+                    <span className="font-black text-sm text-teal-800">$4.99 / 30 Days</span>
+                  </label>
+
+                  <label
+                    onClick={() => setEcoTier('family_clinic_pro')}
+                    className={`p-3 rounded-2xl border cursor-pointer flex items-center justify-between transition ${
+                      ecoTier === 'family_clinic_pro' ? 'border-teal-600 bg-teal-50/50 ring-2 ring-teal-500/20' : 'border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div>
+                      <span className="font-black text-slate-900 block text-xs">Family &amp; Clinic Pro</span>
+                      <span className="text-[11px] text-slate-500">Up to 5 family members, juvenile &amp; clinic care</span>
+                    </div>
+                    <span className="font-black text-sm text-purple-800">$9.99 / 30 Days</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-bold text-slate-800 block mb-1">Your Full Legal Name *</label>
+                  <input
+                    required
+                    type="text"
+                    placeholder="Enter your full name"
+                    value={ecoName}
+                    onChange={(e) => setEcoName(e.target.value)}
+                    className="w-full p-2.5 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-teal-500"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-800 block mb-1">Phone Number Used to Pay *</label>
+                  <input
+                    required
+                    type="tel"
+                    placeholder="+263 77 123 4567"
+                    value={ecoPhone}
+                    onChange={(e) => setEcoPhone(e.target.value)}
+                    className="w-full p-2.5 rounded-xl border border-slate-300 text-xs font-mono focus:ring-2 focus:ring-teal-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-800 block mb-1">
+                  EcoCash Transaction ID / Approval Code *
+                </label>
+                <input
+                  required
+                  type="text"
+                  placeholder="e.g. MP261030.1234.G56789"
+                  value={ecoTxId}
+                  onChange={(e) => setEcoTxId(e.target.value)}
+                  className="w-full p-2.5 rounded-xl border border-slate-300 text-xs font-mono font-bold uppercase focus:ring-2 focus:ring-teal-500"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-800 block mb-1">
+                  Confirmation Message (Paste the full EcoCash SMS text) *
+                </label>
+                <textarea
+                  required
+                  rows={2}
+                  placeholder="e.g. EcoCash: Transfer of $4.99 to Comfort Medi+ Services 282413 was successful. Approval Code: MP261030.1234.G56789..."
+                  value={ecoConfirmationMsg}
+                  onChange={(e) => setEcoConfirmationMsg(e.target.value)}
+                  className="w-full p-2.5 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-teal-500"
+                />
+              </div>
+
+              {/* Screenshot Image Upload Area */}
+              <div>
+                <label className="font-bold text-slate-800 block mb-1">
+                  Upload Screenshot of EcoCash Payment Proof (Optional but Recommended)
+                </label>
+                <div className="flex flex-col sm:flex-row items-center gap-3 p-3 rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleEcoScreenshotUpload}
+                    className="text-xs file:mr-3 file:py-2 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-teal-600 file:text-white hover:file:bg-teal-700 cursor-pointer"
+                  />
+                  {ecoProofScreenshot && (
+                    <div className="flex items-center gap-2">
+                      <img
+                        src={ecoProofScreenshot}
+                        alt="Screenshot Preview"
+                        className="w-12 h-12 rounded-xl object-cover border border-slate-300 shadow-xs"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setEcoProofScreenshot(null)}
+                        className="text-xs text-rose-600 hover:text-rose-800 font-bold underline"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="pt-2 flex flex-col sm:flex-row gap-2">
+                <button
+                  type="submit"
+                  disabled={isSubmittingEco}
+                  className="flex-1 py-3 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs shadow-md transition active:scale-95 disabled:opacity-50 flex items-center justify-center gap-1.5"
+                >
+                  {isSubmittingEco ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Submitting Payment Proof...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CreditCard className="w-4 h-4" />
+                      <span>Submit EcoCash Proof for Admin Verification</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

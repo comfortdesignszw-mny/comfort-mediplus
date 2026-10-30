@@ -1,6 +1,31 @@
-export type UserRole = 'patient' | 'caregiver' | 'doctor' | 'admin';
+export type UserRole = 'patient' | 'caregiver' | 'doctor' | 'pharmacist' | 'admin';
 
-export type SubscriptionTier = 'free' | 'pro' | 'family_pro';
+export type SubscriptionTier = 'free' | 'pro' | 'family_pro' | 'medi_pro' | 'family_clinic_pro';
+
+export interface SubscriptionPaymentRequest {
+  id: string;
+  userId: string;
+  userName?: string;
+  userFullName?: string;
+  userEmail?: string;
+  userPhone?: string;
+  userPhoneNumber?: string;
+  tier: SubscriptionTier;
+  billingCycle: 'monthly' | 'yearly';
+  amountUsd?: number;
+  ecocashTransactionId: string;
+  ecocashMessage?: string;
+  ecocashConfirmationMessage?: string;
+  screenshotUrl?: string;
+  proofScreenshotUrl?: string;
+  paymentMethod?: 'ecocash' | 'card' | 'manual';
+  submittedAt: string;
+  status: 'pending' | 'verified' | 'rejected';
+  verifiedAt?: string;
+  verifiedBy?: string;
+  rejectionReason?: string;
+  validUntil?: string; // 30 days from activation
+}
 
 export interface FirebaseUserRecord {
   uid: string;
@@ -32,6 +57,11 @@ export interface FirebaseUserRecord {
   subscriptionRenewalTermsAccepted?: boolean;
   subscriptionRenewalDate?: string;
   autoRenew?: boolean;
+  subscriptionStatus?: 'active' | 'expired' | 'pending' | 'none';
+  subscriptionActivatedAt?: string;
+  subscriptionExpiresAt?: string;
+  subscriptionPaymentMethod?: 'ecocash' | 'card' | 'manual';
+  pendingSubscriptionRequest?: SubscriptionPaymentRequest;
 
   // Compliance & Security flags
   sessionReplayBlocked?: boolean;
@@ -89,6 +119,11 @@ export interface UserProfile {
   subscriptionRenewalTermsAccepted?: boolean;
   subscriptionRenewalDate?: string;
   autoRenew?: boolean;
+  subscriptionStatus?: 'active' | 'expired' | 'pending' | 'none';
+  subscriptionActivatedAt?: string;
+  subscriptionExpiresAt?: string;
+  subscriptionPaymentMethod?: 'ecocash' | 'card' | 'manual';
+  pendingSubscriptionRequest?: SubscriptionPaymentRequest;
 
   // Security & DMCA
   sessionReplayBlocked?: boolean;
@@ -163,7 +198,7 @@ export interface VaccinationRecord {
 
 export interface MedicalNote {
   id: string;
-  authorType: 'doctor' | 'personal' | 'caregiver';
+  authorType: 'doctor' | 'personal' | 'caregiver' | 'pharmacist';
   authorName: string;
   date: string;
   content: string;
@@ -204,19 +239,41 @@ export interface MedicationLog {
   date: string; // YYYY-MM-DD
 }
 
+export type FacilityType = 'hospital' | 'clinic' | 'pharmacy' | 'laboratory' | 'specialist' | 'surgery' | 'home_care';
+
 export interface Facility {
   id: string;
   name: string;
-  type: 'hospital' | 'clinic' | 'pharmacy' | 'laboratory' | 'specialist' | 'home_care';
+  type: FacilityType;
   province: string;
   city: string;
   address: string;
   phone: string;
+  whatsappNumber?: string;
+  email?: string;
   operatingHours: string;
   hasEmergency24_7: boolean;
   services: string[];
   specialties: string[];
+  createdBy?: string;
+  createdByRole?: UserRole;
+  createdAt?: string;
 }
+
+export type AppointmentReasonCategory = 
+  | 'General Medical Advice'
+  | 'Consultation'
+  | 'Routine checkups'
+  | 'Acute Illness'
+  | 'Vaccinations'
+  | 'Advanced Diagnostics testing'
+  | 'Surgical Consultations'
+  | 'Prenatal and Obstetric Care'
+  | 'Impatient Admissions'
+  | 'Imaging and Radiology'
+  | 'Therapy Services'
+  | 'Administrative and Legal Reasons'
+  | 'Other';
 
 export interface Appointment {
   id: string;
@@ -226,10 +283,28 @@ export interface Appointment {
   date: string;
   time: string;
   providerName: string;
+  reasonCategory?: AppointmentReasonCategory;
+  otherReasonSpecify?: string;
   reason: string;
   notes?: string;
-  status: 'booked' | 'confirmed' | 'checked_in' | 'completed' | 'cancelled' | 'rescheduled';
+  status: 'pending' | 'booked' | 'confirmed' | 'checked_in' | 'completed' | 'cancelled' | 'rescheduled';
   isWaitingList?: boolean;
+
+  // Patient personal details
+  patientId?: string;
+  patientName?: string;
+  patientPhone?: string;
+  patientEmail?: string;
+  patientDob?: string;
+  patientAge?: number;
+
+  // Facility management & Doctor scheduling
+  scheduledBy?: string;
+  scheduledAt?: string;
+  scheduledDate?: string;
+  scheduledTime?: string;
+  facilityWhatsApp?: string;
+  facilityEmail?: string;
 }
 
 export interface VitalsReading {
@@ -247,7 +322,8 @@ export interface VitalsReading {
   mood?: 'great' | 'good' | 'neutral' | 'low' | 'distressed';
   sleepHours?: number;
   notes?: string;
-  recordedBy: string; // e.g. "Self" or "Nurse Chipo"
+  recordedBy: string; // e.g. "Self" or "Dr. Chipo" or "Nurse Moyo"
+  recordedByRole?: string;
 }
 
 export interface CareTask {
@@ -264,7 +340,7 @@ export interface CareTask {
 export interface CareTeamMember {
   id: string;
   name: string;
-  role: 'Family Member' | 'Caregiver' | 'Nurse' | 'Doctor' | 'Therapist' | 'Community Health Worker';
+  role: 'Family Member' | 'Caregiver' | 'Nurse' | 'Doctor' | 'Therapist' | 'Community Health Worker' | 'Pharmacist';
   phone: string;
   email?: string;
   notes?: string;
@@ -281,6 +357,104 @@ export interface ProgressReport {
   photoUrl?: string;
 }
 
+export interface FacilityBooking {
+  id: string;
+  facilityId: string;
+  facilityName: string;
+  facilityWhatsApp?: string;
+  facilityEmail?: string;
+  patientId: string;
+  patientName: string;
+  patientPhone: string;
+  patientEmail?: string;
+  patientDob?: string;
+  patientAge?: number;
+  bookingDate: string;
+  bookingTime: string;
+  reasonCategory: AppointmentReasonCategory;
+  otherReasonSpecify?: string;
+  notes?: string;
+  status: 'pending' | 'scheduled' | 'completed' | 'cancelled';
+  scheduledDate?: string;
+  scheduledTime?: string;
+  scheduledBy?: string;
+  createdAt: string;
+}
+
+export interface MedicalProcedureRecommendation {
+  id: string;
+  procedureName: string;
+  category: 'surgical' | 'diagnostic' | 'therapeutic' | 'laboratory' | 'rehabilitation' | 'preventative';
+  clinicalJustification: string;
+  urgency: 'routine' | 'priority' | 'urgent' | 'emergency';
+  recommendedFacility?: string;
+  recommendedSpecialist?: string;
+  recommendedBy: string;
+  recommendedByRole: string;
+  dateRecommended: string;
+  createdAt?: string;
+  status: 'recommended' | 'scheduled' | 'in_progress' | 'completed' | 'deferred';
+  notes?: string;
+}
+
+export interface HealthyEatingHabit {
+  id: string;
+  title: string;
+  mealType: 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'hydration';
+  targetTime: string;
+  dietaryRegimen: string; // e.g. "Low Sodium, Diabetic Friendly"
+  foodItems: string;
+  caloricOrPortionGoal?: string;
+  hydrationTargetMl?: number;
+  specialInstructions?: string;
+  prescribedBy?: string;
+  createdBy?: string;
+  createdByRole?: string;
+  createdAt?: string;
+  isActive: boolean;
+}
+
+export interface ExercisePhysioSchedule {
+  id: string;
+  title: string;
+  type: 'mobility' | 'walking' | 'physiotherapy' | 'stretching' | 'cardio' | 'respiratory';
+  frequency: string;
+  durationMinutes: number;
+  repsOrSets?: string;
+  targetTime: string;
+  precautions: string;
+  assistanceRequired: boolean;
+  scheduledBy: string;
+  createdBy?: string;
+  createdByRole?: string;
+  createdAt?: string;
+  isActive: boolean;
+}
+
+export interface GeneralCareLog {
+  id: string;
+  category: 'feeding' | 'cooking' | 'washing_bathing' | 'bed_making' | 'hygiene' | 'task_check' | 'other';
+  title: string;
+  performedAt?: string;
+  performedBy?: string;
+  loggedAt?: string;
+  loggedBy?: string;
+  loggedByRole?: string;
+  patientComfortNotes?: string;
+}
+
+export interface MedicationAdministrationRecord {
+  id: string;
+  medicationId: string;
+  medicationName: string;
+  dosageGiven: string;
+  route: string;
+  administeredAt: string;
+  administeredBy: string;
+  prescribedByDoctor: string;
+  patientResponseNotes?: string;
+}
+
 export interface HomeCarePlan {
   id: string;
   title: string;
@@ -289,6 +463,11 @@ export interface HomeCarePlan {
   endDate?: string;
   goals: string[];
   tasks: CareTask[];
+  recommendedProcedures?: MedicalProcedureRecommendation[];
+  healthyEatingHabits?: HealthyEatingHabit[];
+  exercisePhysioSchedules?: ExercisePhysioSchedule[];
+  generalCareLogs?: GeneralCareLog[];
+  medicationAdministrations?: MedicationAdministrationRecord[];
 }
 
 export interface SyncQueueItem {

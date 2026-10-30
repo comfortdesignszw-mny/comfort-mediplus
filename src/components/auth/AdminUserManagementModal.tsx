@@ -33,7 +33,8 @@ import {
   ShieldCheck,
   Trash2,
   Bell,
-  Sparkles
+  Sparkles,
+  CreditCard
 } from 'lucide-react';
 
 interface AdminUserManagementModalProps {
@@ -46,8 +47,12 @@ export const AdminUserManagementModal: React.FC<AdminUserManagementModalProps> =
   onClose,
 }) => {
   const showToast = useAppStore(s => s.showToast);
+  const subscriptionRequests = useAppStore(s => s.subscriptionRequests);
+  const loadSubscriptionRequests = useAppStore(s => s.loadSubscriptionRequests);
+  const verifyAndActivateEcoCashSubscription = useAppStore(s => s.verifyAndActivateEcoCashSubscription);
+  const rejectEcoCashSubscription = useAppStore(s => s.rejectEcoCashSubscription);
 
-  const [activeTab, setActiveTab] = useState<'roles' | 'assignments' | 'audit'>('roles');
+  const [activeTab, setActiveTab] = useState<'roles' | 'assignments' | 'audit' | 'subscriptions'>('roles');
   const [users, setUsers] = useState<FirebaseUserRecord[]>([]);
   const [assignments, setAssignments] = useState<PatientAssignment[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
@@ -58,6 +63,7 @@ export const AdminUserManagementModal: React.FC<AdminUserManagementModalProps> =
   const [userToDelete, setUserToDelete] = useState<FirebaseUserRecord | null>(null);
   const [isDeletingUser, setIsDeletingUser] = useState(false);
   const [auditCategoryFilter, setAuditCategoryFilter] = useState<'ALL' | 'AUTH' | 'CLINICAL' | 'SECURITY'>('ALL');
+  const [selectedProofPreview, setSelectedProofPreview] = useState<string | null>(null);
 
   // New assignment form state
   const [selectedDoctorId, setSelectedDoctorId] = useState('');
@@ -77,6 +83,7 @@ export const AdminUserManagementModal: React.FC<AdminUserManagementModalProps> =
       setUsers(usersData);
       setAssignments(assignmentsData);
       setAuditLogs(auditData);
+      await loadSubscriptionRequests().catch(() => null);
     } catch (err: any) {
       console.error('Failed to load admin data:', err);
       setErrorMessage(err?.message || 'Could not load management data. Verify admin permissions.');
@@ -258,6 +265,14 @@ export const AdminUserManagementModal: React.FC<AdminUserManagementModalProps> =
             >
               3. Staff Monitoring Audit ({auditLogs.length})
             </button>
+            <button
+              onClick={() => setActiveTab('subscriptions')}
+              className={`flex-1 py-1.5 rounded-lg transition ${
+                activeTab === 'subscriptions' ? 'bg-white text-[#0a2540] shadow' : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              4. EcoCash Subscriptions ({subscriptionRequests.filter(r => r.status === 'pending').length} Pending)
+            </button>
           </div>
         </div>
 
@@ -392,10 +407,10 @@ export const AdminUserManagementModal: React.FC<AdminUserManagementModalProps> =
                       {/* Role upgrade buttons */}
                       <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-center">
                         <span className="text-[10px] text-slate-400 font-bold uppercase mr-1">Role:</span>
-                        {(['patient', 'caregiver', 'doctor', 'admin'] as UserRole[]).map((r) => {
+                        {(['patient', 'caregiver', 'doctor', 'pharmacist', 'admin'] as UserRole[]).map((r) => {
                           const isCurrent = u.role === r;
                           const isUpdatingThis = updatingUid === u.uid;
-                          const label = r === 'patient' ? 'Patient' : r === 'caregiver' ? 'Caregiver' : r === 'doctor' ? 'Doctor' : 'Admin';
+                          const label = r === 'patient' ? 'Patient' : r === 'caregiver' ? 'Caregiver' : r === 'doctor' ? 'Doctor' : r === 'pharmacist' ? 'Pharmacist' : 'Admin';
                           return (
                             <button
                               key={r}
@@ -650,7 +665,159 @@ export const AdminUserManagementModal: React.FC<AdminUserManagementModalProps> =
               )}
             </div>
           )}
+
+          {/* TAB 4: ECOCASH PAID SUBSCRIPTIONS QUEUE */}
+          {activeTab === 'subscriptions' && (
+            <div className="space-y-4 animate-in fade-in">
+              <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-950 text-xs flex items-start justify-between gap-3">
+                <div className="flex items-start gap-2.5">
+                  <CreditCard className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+                  <div>
+                    <h4 className="font-bold text-sm">EcoCash Subscriptions Verification Queue</h4>
+                    <p className="text-amber-800 mt-0.5">
+                      Users submit their EcoCash payment confirmation message, transaction ID, and proof screenshot. When you verify and click "Activate 30-Day Pro Access", the user's account is upgraded for 30 days and persisted to Firestore.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => loadSubscriptionRequests()}
+                  className="px-3 py-1.5 rounded-xl border border-amber-300 bg-white hover:bg-amber-100 text-amber-900 font-bold shrink-0 transition"
+                >
+                  Refresh Queue
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                {subscriptionRequests.map((req) => (
+                  <div
+                    key={req.id}
+                    className="p-4 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-3 text-xs"
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-100">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-black text-slate-900 text-sm">{req.userFullName}</span>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700">
+                            {req.userPhoneNumber}
+                          </span>
+                          <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                            req.tier === 'family_clinic_pro' ? 'bg-purple-100 text-purple-800' : 'bg-teal-100 text-teal-800'
+                          }`}>
+                            {req.tier === 'family_clinic_pro' ? 'Family & Clinic Pro ($9.99)' : 'Medi+ Pro ($4.99)'}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-400 mt-0.5">Submitted: {new Date(req.submittedAt).toLocaleString()}</p>
+                      </div>
+
+                      <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold self-start sm:self-center ${
+                        req.status === 'verified' ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' :
+                        req.status === 'rejected' ? 'bg-rose-100 text-rose-800 border border-rose-300' :
+                        'bg-amber-100 text-amber-800 border border-amber-300 animate-pulse'
+                      }`}>
+                        {req.status.toUpperCase()}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                      <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
+                        <p className="text-slate-500 font-bold uppercase text-[10px]">EcoCash Transaction ID</p>
+                        <p className="font-mono font-bold text-slate-900 text-sm">{req.ecocashTransactionId}</p>
+                        <p className="text-slate-500 font-bold uppercase text-[10px] pt-1">Confirmation SMS Message</p>
+                        <p className="text-slate-700 bg-white p-2 rounded-lg border border-slate-200 italic font-mono text-[11px]">
+                          "{req.ecocashConfirmationMessage}"
+                        </p>
+                      </div>
+
+                      <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex flex-col justify-between">
+                        <div>
+                          <p className="text-slate-500 font-bold uppercase text-[10px]">Proof Screenshot</p>
+                          {req.proofScreenshotUrl ? (
+                            <div className="mt-1 flex items-center gap-2">
+                              <img
+                                src={req.proofScreenshotUrl}
+                                alt="Proof Screenshot"
+                                className="w-16 h-16 object-cover rounded-xl border border-slate-300 cursor-pointer hover:opacity-80"
+                                onClick={() => setSelectedProofPreview(req.proofScreenshotUrl || null)}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setSelectedProofPreview(req.proofScreenshotUrl || null)}
+                                className="text-xs text-teal-700 font-bold underline"
+                              >
+                                View Full Screenshot
+                              </button>
+                            </div>
+                          ) : (
+                            <p className="text-slate-400 italic text-[11px] mt-1">No screenshot image attached</p>
+                          )}
+                        </div>
+
+                        {req.verifiedBy && (
+                          <p className="text-[10px] text-emerald-700 font-semibold pt-2">
+                            Verified by {req.verifiedBy} on {req.verifiedAt ? new Date(req.verifiedAt).toLocaleDateString() : 'N/A'}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    {req.status === 'pending' && (
+                      <div className="pt-2 border-t border-slate-100 flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => rejectEcoCashSubscription(req.id, 'Transaction ID or SMS could not be verified with EcoCash')}
+                          className="px-3 py-1.5 rounded-xl border border-rose-200 hover:bg-rose-50 text-rose-700 font-bold text-xs transition"
+                        >
+                          Reject
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => verifyAndActivateEcoCashSubscription(req.id, req.userId, (req.tier === 'family_pro' ? 'family_clinic_pro' : req.tier === 'pro' ? 'medi_pro' : req.tier) as any)}
+                          className="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm transition active:scale-95 flex items-center gap-1.5"
+                        >
+                          <CheckCircle2 className="w-4 h-4" />
+                          <span>Verify &amp; Activate 30-Day Pro</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+                {subscriptionRequests.length === 0 && (
+                  <div className="p-8 text-center text-xs text-slate-400 bg-white rounded-3xl border border-slate-200">
+                    No EcoCash subscription requests in queue yet. Users who submit EcoCash transaction IDs and receipts will appear here for verification.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
+
+        {/* Screenshot Full Preview Modal */}
+        {selectedProofPreview && (
+          <div
+            onClick={() => setSelectedProofPreview(null)}
+            className="fixed inset-0 z-70 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in"
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="max-w-2xl max-h-[90vh] bg-white rounded-3xl p-4 shadow-2xl overflow-hidden flex flex-col space-y-3"
+            >
+              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                <h4 className="font-bold text-slate-900 text-sm">EcoCash Payment Proof Screenshot</h4>
+                <button
+                  type="button"
+                  onClick={() => setSelectedProofPreview(null)}
+                  className="p-1 rounded-lg text-slate-400 hover:text-slate-600"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="overflow-auto max-h-[75vh] rounded-xl flex items-center justify-center bg-slate-50">
+                <img src={selectedProofPreview} alt="EcoCash Receipt Full Preview" className="max-w-full max-h-full object-contain" />
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Footer */}
         <div className="p-4 border-t border-slate-100 bg-slate-50 flex items-center justify-between">

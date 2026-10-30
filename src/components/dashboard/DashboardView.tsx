@@ -21,10 +21,12 @@ import {
   PlusCircle,
   MessageSquare,
   X,
-  CalendarCheck,
-  CheckCircle2,
-  ListTodo,
-  Bell
+  CalendarCheck, 
+  CheckCircle2, 
+  ListTodo, 
+  Bell,
+  Building2,
+  Stethoscope
 } from 'lucide-react';
 
 interface DashboardViewProps {
@@ -36,6 +38,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigateTab, onO
   const language = useAppStore(s => s.language);
   const userProfile = useAppStore(s => s.userProfile);
   const currentUserRole = useAppStore(s => s.currentUserRole);
+  const setAppointmentActiveSubTab = useAppStore(s => s.setAppointmentActiveSubTab);
   const medications = useAppStore(s => s.medications);
   const adherenceStreak = useAppStore(s => s.adherenceStreak);
   const markMedicationTaken = useAppStore(s => s.markMedicationTaken);
@@ -52,6 +55,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigateTab, onO
   const [showRemindersModal, setShowRemindersModal] = useState(false);
 
   const t = getTranslation(language);
+
+  const handleOpenFacilityBooking = () => {
+    setAppointmentActiveSubTab('facility_directory');
+    onNavigateTab('appointments');
+  };
 
   // Latest vitals
   const latestVital = vitals[0];
@@ -79,7 +87,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigateTab, onO
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-teal-400 animate-ping" />
             <span className="font-bold uppercase tracking-wider text-teal-300">
-              {currentUserRole === 'caregiver' ? 'Caregiver Mode' : currentUserRole === 'doctor' ? 'Clinical Doctor View' : 'Facility Admin View'}
+              {currentUserRole === 'caregiver' ? 'Caregiver Mode' : currentUserRole === 'doctor' ? 'Clinical Doctor View' : currentUserRole === 'pharmacist' ? 'Clinical Pharmacist View' : 'Facility Admin View'}
             </span>
           </div>
           <span className="text-[11px] text-slate-300">Viewing Patient: {userProfile.fullName}</span>
@@ -103,7 +111,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigateTab, onO
             </h1>
           </div>
 
-          <div className="flex items-center gap-2 self-start sm:self-center shrink-0">
+          <div className="flex flex-wrap items-center gap-2 self-start sm:self-center shrink-0">
+            {/* Medical Facility Booking Button */}
+            <button
+              onClick={handleOpenFacilityBooking}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-black shadow-lg shadow-emerald-500/20 active:scale-95 transition"
+              title="Book Medical Facility Appointment"
+            >
+              <Building2 className="w-3.5 h-3.5" />
+              <span>Medical Facility Booking</span>
+            </button>
+
             {/* Health Reminders Quick Trigger */}
             <button
               onClick={() => setShowRemindersModal(true)}
@@ -117,7 +135,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigateTab, onO
             {/* Emergency SOS Trigger */}
             <button
               onClick={() => setShowEmergencyModal(true)}
-              className="flex items-center gap-2 px-4 py-2 rounded-2xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-black shadow-lg shadow-rose-600/30 active:scale-95 transition"
+              className="flex items-center gap-2 px-3.5 py-2 rounded-2xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-black shadow-lg shadow-rose-600/30 active:scale-95 transition"
               title="Open Emergency Contacts"
             >
               <PhoneCall className="w-4 h-4 animate-pulse" />
@@ -420,10 +438,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigateTab, onO
           </div>
 
           <button
-            onClick={() => onNavigateTab('appointments')}
-            className="mt-3 text-xs font-bold text-slate-600 hover:text-slate-900 flex items-center justify-between pt-2 border-t border-slate-100"
+            onClick={handleOpenFacilityBooking}
+            className="mt-3 text-xs font-bold text-teal-700 hover:text-teal-900 flex items-center justify-between pt-2 border-t border-slate-100"
           >
-            <span>Search 20+ Preloaded Zimbabwe Facilities</span>
+            <span>Medical Facilities Directory & Booking (Hospitals, Clinics, Surgeries, Labs)</span>
             <ChevronRight className="w-3.5 h-3.5" />
           </button>
         </div>

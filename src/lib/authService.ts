@@ -23,7 +23,17 @@ import {
   query,
   where
 } from 'firebase/firestore';
-import { FirebaseUserRecord, UserRole, PatientAssignment, AuditLog } from '../types';
+import { 
+  FirebaseUserRecord, 
+  UserRole, 
+  PatientAssignment, 
+  AuditLog, 
+  Facility, 
+  FacilityBooking,
+  Appointment, 
+  SubscriptionPaymentRequest, 
+  SubscriptionTier 
+} from '../types';
 
 export const ADMIN_EMAIL = 'comfort.designszw@gmail.com';
 
@@ -541,3 +551,261 @@ export async function deleteUserAccountAndData(userId: string): Promise<void> {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
 }
+
+/**
+ * Facility Directory Profile Creation (Admin, Doctor, Pharmacist)
+ */
+export async function createFacilityProfile(facilityData: Omit<Facility, 'id'>): Promise<Facility> {
+  const facilityId = 'fac-zw-' + Date.now().toString(36) + '-' + Math.random().toString(36).substring(2, 6);
+  const facility: Facility = {
+    ...facilityData,
+    id: facilityId,
+    createdAt: new Date().toISOString(),
+  };
+
+  try {
+    await setDoc(doc(db, 'facilities', facilityId), facility);
+    await logStaffActivity(
+      `Created Facility Profile: ${facility.name} (${facility.type.toUpperCase()}) in ${facility.city}`,
+      'CLINICAL',
+      `Facility established by ${facility.createdByRole?.toUpperCase() || 'STAFF'}. WhatsApp: ${facility.whatsappNumber || facility.phone}`
+    );
+  } catch (error) {
+    console.warn('Facility profile Firestore write note:', error);
+  }
+
+  return facility;
+}
+
+export async function fetchAllFacilitiesFromFirestore(): Promise<Facility[]> {
+  try {
+    const snap = await getDocs(collection(db, 'facilities'));
+    return snap.docs.map(d => d.data() as Facility);
+  } catch (error) {
+    console.warn('Could not read facilities from Firestore:', error);
+    return [];
+  }
+}
+
+/**
+ * Facility Booking & Appointment Creation
+ */
+export async function createFacilityBooking(bookingData: any): Promise<any> {
+  const bookingId = bookingData.id || ('apt-' + Date.now().toString(36) + '-' + Math.random().toString(36).substring(2, 6));
+  const booking = {
+    ...bookingData,
+    id: bookingId,
+  };
+
+  const patientId = booking.patientId || auth.currentUser?.uid;
+
+  // 1. Persist to patient's personal appointment collection
+  if (patientId) {
+    try {
+      await setDoc(doc(db, 'users', patientId, 'appointments', bookingId), booking);
+    } catch (e) {
+      console.warn('Patient appointment write note:', e);
+    }
+  }
+
+  // 2. Persist to central facility bookings queue for Facility Managers / Doctors / Admins
+  try {
+    await setDoc(doc(db, 'facilityBookings', bookingId), booking);
+    await logStaffActivity(
+      `New Facility Booking: ${booking.patientName || 'Patient'} booked at ${booking.facilityName || 'Medical Facility'}`,
+      'APPOINTMENT',
+      `Reason: ${booking.reasonCategory || booking.reason || 'Consultation'} for ${booking.bookingDate || booking.date} at ${booking.bookingTime || booking.time}`
+    );
+  } catch (e) {
+    console.warn('Facility central booking write note:', e);
+  }
+
+  return booking;
+}
+
+export async function fetchAllFacilityBookings(): Promise<FacilityBooking[]> {
+  try {
+    const snap = await getDocs(collection(db, 'facilityBookings'));
+    const list = snap.docs.map(d => d.data() as FacilityBooking);
+    return list.sort((a, b) => new Date(b.bookingDate || b.createdAt || 0).getTime() - new Date(a.bookingDate || a.createdAt || 0).getTime());
+  } catch (error) {
+    console.warn('Could not fetch facility bookings queue:', error);
+    return [];
+  }
+}
+
+/**
+ * Facility Manager or Doctor schedules an appointment date for a booking/waitlist
+ */
+export async function scheduleFacilityBooking(
+  bookingId: string,
+  scheduledDate: string,
+  scheduledTime: string,
+  doctorName: string,
+  notes?: string,
+  patientId?: string
+): Promise<void> {
+  const updates = {
+    date: scheduledDate,
+    time: scheduledTime,
+    scheduledDate,
+    scheduledTime,
+    providerName: doctorName,
+    doctorName,
+    status: 'scheduled' as const,
+    isWaitingList: false,
+    scheduledBy: doctorName,
+    scheduledAt: new Date().toISOString(),
+    notes: notes || '',
+  };
+
+  // 1. Update central booking
+  try {
+    await updateDoc(doc(db, 'facilityBookings', bookingId), updates);
+  } catch (e) {
+    console.warn('Central booking schedule note:', e);
+  }
+
+  // 2. Update patient appointment
+  if (patientId) {
+    try {
+      await updateDoc(doc(db, 'users', patientId, 'appointments', bookingId), updates);
+    } catch (e) {
+      console.warn('Patient appointment schedule note:', e);
+    }
+  }
+
+  await logStaffActivity(
+    `Appointment Scheduled: ${doctorName} confirmed visit for ${scheduledDate} at ${scheduledTime}`,
+    'APPOINTMENT',
+    `Booking ID: ${bookingId}`
+  );
+}
+
+/**
+ * EcoCash Paid Subscription Management
+ */
+export async function submitEcoCashSubscriptionRequest(
+  data: Omit<SubscriptionPaymentRequest, 'id' | 'submittedAt' | 'status'>
+): Promise<SubscriptionPaymentRequest> {
+  const requestId = 'sub_req_' + Date.now();
+  const request: SubscriptionPaymentRequest = {
+    ...data,
+    id: requestId,
+    submittedAt: new Date().toISOString(),
+    status: 'pending',
+  };
+
+  // 1. Save to central subscriptionRequests collection for Admin
+  try {
+    await setDoc(doc(db, 'subscriptionRequests', requestId), request);
+  } catch (e) {
+    console.warn('Subscription request central write note:', e);
+  }
+
+  // 2. Update user profile with pending request
+  try {
+    await setDoc(doc(db, 'users', data.userId), {
+      pendingSubscriptionRequest: request,
+      subscriptionStatus: 'pending',
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
+  } catch (e) {
+    console.warn('User subscription pending update note:', e);
+  }
+
+  await logStaffActivity(
+    `EcoCash Payment Submitted: ${data.userName} for ${data.tier === 'family_pro' ? 'Family & Clinic Pro' : 'Medi+ Pro'} (EcoCash TX: ${data.ecocashTransactionId})`,
+    'AUTH',
+    `Amount: $${data.amountUsd} • Phone: ${data.userPhone}`
+  );
+
+  return request;
+}
+
+export async function fetchAllSubscriptionRequests(): Promise<SubscriptionPaymentRequest[]> {
+  try {
+    const snap = await getDocs(collection(db, 'subscriptionRequests'));
+    const list = snap.docs.map(d => d.data() as SubscriptionPaymentRequest);
+    return list.sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
+  } catch (error) {
+    console.warn('Could not fetch subscription requests:', error);
+    return [];
+  }
+}
+
+/**
+ * Admin Verification & Activation of EcoCash Pro Subscription (persisted for 30 days)
+ */
+export async function verifyAndActivateSubscription(
+  requestId: string,
+  targetUid: string,
+  tier: SubscriptionTier,
+  adminName: string = 'Super Admin',
+  durationDays: number = 30
+): Promise<{ activatedAt: string; expiresAt: string }> {
+  const now = new Date();
+  const expires = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
+  const activatedAt = now.toISOString();
+  const expiresAt = expires.toISOString();
+
+  // 1. Update subscription request
+  try {
+    await updateDoc(doc(db, 'subscriptionRequests', requestId), {
+      status: 'verified',
+      verifiedAt: activatedAt,
+      verifiedBy: adminName,
+      validUntil: expiresAt,
+    });
+  } catch (e) {
+    console.warn('Subscription request verification update note:', e);
+  }
+
+  // 2. Update target user account in Firestore
+  try {
+    await setDoc(doc(db, 'users', targetUid), {
+      subscriptionTier: tier,
+      subscriptionStatus: 'active',
+      subscriptionActivatedAt: activatedAt,
+      subscriptionExpiresAt: expiresAt,
+      subscriptionRenewalDate: expires.toLocaleDateString('en-ZW', { day: 'numeric', month: 'long', year: 'numeric' }),
+      subscriptionPaymentMethod: 'ecocash',
+      autoRenew: false,
+      updatedAt: activatedAt,
+    }, { merge: true });
+  } catch (e) {
+    console.warn('Target user subscription activation update note:', e);
+  }
+
+  await logStaffActivity(
+    `Admin Verified EcoCash Subscription: Activated ${tier.toUpperCase()} for 30 days for user UID ${targetUid}`,
+    'SECURITY',
+    `Active until: ${expiresAt} • Verified by ${adminName}`
+  );
+
+  return { activatedAt, expiresAt };
+}
+
+export async function rejectSubscriptionRequest(
+  requestId: string,
+  adminName: string = 'Super Admin',
+  reason: string = 'Payment could not be verified on EcoCash statement'
+): Promise<void> {
+  try {
+    await updateDoc(doc(db, 'subscriptionRequests', requestId), {
+      status: 'rejected',
+      rejectionReason: reason,
+      verifiedAt: new Date().toISOString(),
+      verifiedBy: adminName,
+    });
+  } catch (e) {
+    console.warn('Subscription rejection update note:', e);
+  }
+
+  await logStaffActivity(
+    `Admin Rejected EcoCash Subscription Request: ID ${requestId}`,
+    'SECURITY',
+    `Reason: ${reason} • Rejected by ${adminName}`
+  );
+}
+

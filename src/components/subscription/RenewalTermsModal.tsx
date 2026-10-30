@@ -161,7 +161,7 @@ export const RenewalTermsModal: React.FC<RenewalTermsModalProps> = ({
               <span>4. Rate Lock &amp; Domestic Payment Channels</span>
             </div>
             <p className="text-slate-600 text-xs leading-relaxed">
-              Supported payment processors: EcoCash, InnBucks, Visa, Mastercard, and ZimSwitch. Your initial subscribed price is guaranteed locked and will never increase without mandatory 30-day prior written notice via registered email and WhatsApp.
+              Supported payment processors: EcoCash, InnBucks, Visa, Mastercard, and ZimSwitch. For direct domestic EcoCash payments, dial <strong>*151*1*1*0772824132*5#</strong> for Pro ($5) or <strong>*151*1*1*0772824132*10#</strong> for Family Clinic Pro ($10). Your initial subscribed price is guaranteed locked and will never increase without mandatory 30-day prior written notice via registered email and WhatsApp.
             </p>
           </div>
 

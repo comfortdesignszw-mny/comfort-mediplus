@@ -76,6 +76,8 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, onNavigateTab }) => {
         return 'Admin';
       case 'doctor':
         return 'Doctor/Clinician';
+      case 'pharmacist':
+        return 'Pharmacist';
       case 'caregiver':
         return 'Caregiver';
       case 'patient':

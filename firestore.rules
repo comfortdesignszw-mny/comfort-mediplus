@@ -35,7 +35,7 @@ service cloud.firestore {
     function isValidUser(data) {
       return data.uid is string && data.uid.size() <= 128 &&
              data.fullName is string && data.fullName.size() <= 128 &&
-             data.role in ['admin', 'patient', 'caregiver', 'doctor'] &&
+             data.role in ['admin', 'patient', 'caregiver', 'doctor', 'pharmacist'] &&
              (!('email' in data) || (data.email is string && data.email.size() <= 256)) &&
              (!('phoneNumber' in data) || (data.phoneNumber is string && data.phoneNumber.size() <= 32));
     }
@@ -44,6 +44,43 @@ service cloud.firestore {
     match /admins/{adminId} {
       allow read: if isSignedIn();
       allow write: if isSystemAdmin() && isValidId(adminId);
+    }
+
+    // Facilities Directory (Admins, Doctors, and Pharmacists can create/manage facilities)
+    match /facilities/{facilityId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(facilityId) && (
+        isSystemAdmin() ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'doctor', 'pharmacist']
+      );
+      allow update, delete: if isSystemAdmin() && isValidId(facilityId);
+    }
+
+    // Facility Bookings & Appointment Waitlist Scheduling
+    match /facilityBookings/{bookingId} {
+      allow read: if isSignedIn() && (
+        isSystemAdmin() ||
+        resource.data.patientId == request.auth.uid ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'doctor', 'pharmacist']
+      );
+      allow create: if isSignedIn() && isValidId(bookingId) && request.resource.data.patientId == request.auth.uid;
+      allow update: if isSignedIn() && isValidId(bookingId) && (
+        isSystemAdmin() ||
+        resource.data.patientId == request.auth.uid ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'doctor', 'pharmacist']
+      );
+      allow delete: if isSystemAdmin() && isValidId(bookingId);
+    }
+
+    // EcoCash Paid Subscription Requests & Verification Queue
+    match /subscriptionRequests/{requestId} {
+      allow read: if isSignedIn() && (
+        isSystemAdmin() ||
+        resource.data.userId == request.auth.uid
+      );
+      allow create: if isSignedIn() && isValidId(requestId) && request.resource.data.userId == request.auth.uid;
+      allow update: if isSystemAdmin() && isValidId(requestId);
+      allow delete: if isSystemAdmin() && isValidId(requestId);
     }
 
     // Patient Assignments (Admin assigns patients to doctors/clinicians)
@@ -66,7 +103,7 @@ service cloud.firestore {
 
     // User RBAC profiles & clinical data
     match /users/{userId} {
-      // Patients read own profile; assigned doctors and admins can read
+      // Patients read own profile; assigned doctors, pharmacists, and admins can read
       allow get: if (isOwner(userId) || isSystemAdmin() || isAssignedDoctor(userId)) && isValidId(userId);
       // Strictly Admin only: regular users cannot list all users
       allow list: if isSystemAdmin();
@@ -81,8 +118,8 @@ service cloud.firestore {
         );
 
       // Updates:
-      // - Admin has total privilege for user management (promote, demote, modify user roles)
-      // - Regular user can ONLY update their own personal profile fields, never their role or other users' data
+      // - Admin has total privilege for user management (promote, demote, modify user roles, activate subscription)
+      // - Regular user can update their personal profile and subscription fields
       allow update: if isSignedIn() && isValidId(userId) && isValidUser(request.resource.data) && (
         isSystemAdmin() ||
         (
@@ -91,7 +128,9 @@ service cloud.firestore {
           request.resource.data.role == resource.data.role &&
           request.resource.data.diff(resource.data).affectedKeys().hasOnly([
             'fullName', 'phoneNumber', 'email', 'updatedAt', 'authProvider',
-            'city', 'bloodType', 'bmi', 'insuranceProvider', 'emergencyContacts'
+            'city', 'bloodType', 'bmi', 'insuranceProvider', 'emergencyContacts',
+            'subscriptionTier', 'subscriptionBillingCycle', 'subscriptionStatus',
+            'subscriptionRenewalDate', 'subscriptionPaymentMethod', 'pendingSubscriptionRequest'
           ])
         )
       );
@@ -99,7 +138,7 @@ service cloud.firestore {
       // Deletion: Admin has privilege for user management (delete users); Owner can delete own account
       allow delete: if (isOwner(userId) || isSystemAdmin()) && isValidId(userId);
 
-      // Scalable Subcollections per patient: vitals, medications, appointments, records, tasks, progressReports
+      // Scalable Subcollections per patient: vitals, medications, appointments, records, tasks, progressReports, procedures
       match /{subcollection}/{docId} {
         allow read: if (isOwner(userId) || isSystemAdmin() || isAssignedDoctor(userId)) && isValidId(docId);
         allow write: if (isOwner(userId) || isSystemAdmin() || isAssignedDoctor(userId)) && isValidId(docId);

@@ -100,8 +100,18 @@ export const INITIAL_CARE_PLAN: HomeCarePlan = {
   title: 'Personalized Clinical Care Plan',
   period: 'daily',
   startDate: new Date().toISOString().split('T')[0],
-  goals: [],
+  goals: [
+    'Blood pressure stabilization < 130/80 mmHg',
+    'Adherence to prescribed medication regimen 100%',
+    'Daily hydration minimum 2 Litres and low-sodium diet',
+    '30 minutes gentle mobility walking or physiotherapy'
+  ],
   tasks: [],
+  recommendedProcedures: [],
+  healthyEatingHabits: [],
+  exercisePhysioSchedules: [],
+  generalCareLogs: [],
+  medicationAdministrations: [],
 };
 
 export const INITIAL_AUDIT_LOGS: AuditLog[] = [];

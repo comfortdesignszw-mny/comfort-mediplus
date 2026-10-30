@@ -22,7 +22,15 @@ import {
   FontSize,
   FirebaseUserRecord,
   PatientAssignment,
-  SubscriptionTier
+  SubscriptionTier,
+  Facility,
+  FacilityBooking,
+  SubscriptionPaymentRequest,
+  MedicalProcedureRecommendation,
+  HealthyEatingHabit,
+  ExercisePhysioSchedule,
+  GeneralCareLog,
+  MedicationAdministrationRecord
 } from '../types';
 import { 
   INITIAL_USER_PROFILE, 
@@ -57,7 +65,16 @@ import {
   deleteUserAccountAndData, 
   fetchDoctorAssignments, 
   logStaffActivity,
-  updateUserProfileInFirestore
+  updateUserProfileInFirestore,
+  createFacilityProfile,
+  fetchAllFacilitiesFromFirestore,
+  createFacilityBooking,
+  fetchAllFacilityBookings,
+  scheduleFacilityBooking,
+  submitEcoCashSubscriptionRequest,
+  fetchAllSubscriptionRequests,
+  verifyAndActivateSubscription,
+  rejectSubscriptionRequest
 } from '../lib/authService';
 
 interface AppState {
@@ -96,6 +113,14 @@ interface AppState {
 
   // Appointments Module
   appointments: Appointment[];
+  appointmentActiveSubTab: 'my_appointments' | 'facility_directory' | 'waiting_list';
+  setAppointmentActiveSubTab: (tab: 'my_appointments' | 'facility_directory' | 'waiting_list') => void;
+  customFacilities: Facility[];
+  addCustomFacility: (fac: Omit<Facility, 'id' | 'createdAt'>) => Promise<void>;
+  loadFacilities: () => Promise<void>;
+  facilityBookingsQueue: FacilityBooking[];
+  loadFacilityBookings: () => Promise<void>;
+  scheduleFacilityBookingAction: (bookingId: string, scheduledDate: string, scheduledTime: string, notes?: string) => Promise<void>;
 
   // Home Care Module
   carePlan: HomeCarePlan;
@@ -178,6 +203,17 @@ interface AppState {
   logVitalReading: (vital: Omit<VitalsReading, 'id' | 'date'>) => void;
   addProgressReport: (report: Omit<ProgressReport, 'id' | 'date'>) => void;
 
+  // Extended Clinical & Home Care Actions
+  administerPrescribedMedication: (data: { medicationId: string; medicationName: string; dosage: string; route: string; staffNotes?: string; }) => Promise<void>;
+  prescribeMedicationDirect: (med: Omit<Medication, 'id'>) => Promise<void>;
+  addProcedureRecommendation: (proc: Omit<MedicalProcedureRecommendation, 'id' | 'createdAt' | 'recommendedBy' | 'recommendedByRole'>) => Promise<void>;
+  updateProcedureStatus: (procId: string, status: MedicalProcedureRecommendation['status'], bookingReferenceId?: string) => Promise<void>;
+  addHealthyEatingHabit: (habit: Omit<HealthyEatingHabit, 'id' | 'createdAt' | 'createdBy' | 'createdByRole'>) => Promise<void>;
+  toggleHealthyEatingHabit: (habitId: string) => Promise<void>;
+  addExercisePhysioSchedule: (ex: Omit<ExercisePhysioSchedule, 'id' | 'createdAt' | 'createdBy' | 'createdByRole'>) => Promise<void>;
+  toggleExercisePhysioSchedule: (scheduleId: string) => Promise<void>;
+  addGeneralCareLog: (log: Omit<GeneralCareLog, 'id' | 'loggedAt' | 'loggedBy' | 'loggedByRole'>) => Promise<void>;
+
   // Sync actions
   triggerManualSync: () => Promise<void>;
   showToast: (message: string, type?: 'success' | 'info' | 'warning' | 'error') => void;
@@ -203,6 +239,13 @@ interface AppState {
   setShowSubscriptionModal: (show: boolean) => void;
   updateSubscription: (tier: SubscriptionTier, cycle: 'monthly' | 'yearly', acceptTerms: boolean) => Promise<void>;
   cancelSubscriptionAutoRenewal: () => Promise<void>;
+
+  // EcoCash Paid Subscriptions
+  subscriptionRequests: SubscriptionPaymentRequest[];
+  loadSubscriptionRequests: () => Promise<void>;
+  submitEcoCashSubscription: (data: { tier: SubscriptionTier; fullName: string; phoneNumber: string; transactionId: string; confirmationMessage: string; proofScreenshotUrl?: string; }) => Promise<void>;
+  verifyAndActivateEcoCashSubscription: (requestId: string, userId: string, tier: SubscriptionTier) => Promise<void>;
+  rejectEcoCashSubscription: (requestId: string, reason?: string) => Promise<void>;
 
   // Notification Alerts Unsubscribe Controls
   toggleWhatsAppOptOut: (optOut: boolean) => Promise<void>;
@@ -247,6 +290,9 @@ function persistState(state: Partial<AppState>) {
       medicationLogs: state.medicationLogs,
       adherenceStreak: state.adherenceStreak,
       appointments: state.appointments,
+      customFacilities: state.customFacilities,
+      facilityBookingsQueue: state.facilityBookingsQueue,
+      subscriptionRequests: state.subscriptionRequests,
       carePlan: state.carePlan,
       careTeam: state.careTeam,
       vitals: state.vitals,
@@ -342,6 +388,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   adherenceStreak: persisted.adherenceStreak ?? 0,
 
   appointments: persisted.appointments || INITIAL_APPOINTMENTS,
+  appointmentActiveSubTab: 'my_appointments',
+  setAppointmentActiveSubTab: (tab) => set({ appointmentActiveSubTab: tab }),
+  customFacilities: (persisted as any).customFacilities || [],
+  facilityBookingsQueue: (persisted as any).facilityBookingsQueue || [],
+  subscriptionRequests: (persisted as any).subscriptionRequests || [],
 
   carePlan: persisted.carePlan || INITIAL_CARE_PLAN,
   careTeam: persisted.careTeam || INITIAL_CARE_TEAM,
@@ -490,6 +541,104 @@ export const useAppStore = create<AppState>((set, get) => ({
       auditLogs: [audit, ...s.auditLogs]
     }));
     get().showToast('Auto-renewal cancelled. Plan remains active until billing cycle end.', 'info');
+  },
+
+  loadSubscriptionRequests: async () => {
+    try {
+      const reqs = await fetchAllSubscriptionRequests();
+      set({ subscriptionRequests: reqs });
+    } catch (e) {
+      console.warn('Could not fetch subscription requests:', e);
+    }
+  },
+
+  submitEcoCashSubscription: async ({ tier, fullName, phoneNumber, transactionId, confirmationMessage, proofScreenshotUrl }) => {
+    const s = get();
+    const uid = s.firebaseUser?.uid || 'guest-' + Date.now();
+    const req: SubscriptionPaymentRequest = {
+      id: 'sub-' + Date.now(),
+      userId: uid,
+      userFullName: fullName,
+      userPhoneNumber: phoneNumber,
+      tier,
+      billingCycle: 'monthly',
+      paymentMethod: 'ecocash',
+      ecocashTransactionId: transactionId,
+      ecocashConfirmationMessage: confirmationMessage,
+      proofScreenshotUrl,
+      submittedAt: new Date().toISOString(),
+      status: 'pending',
+    };
+
+    try {
+      await submitEcoCashSubscriptionRequest(req);
+    } catch (e) {
+      console.warn('Firestore subscription submit note:', e);
+    }
+
+    const updates: Partial<UserProfile> = {
+      subscriptionStatus: 'pending',
+      pendingSubscriptionRequest: req,
+    };
+    s.updateProfile(updates);
+
+    set((state) => ({
+      subscriptionRequests: [req, ...state.subscriptionRequests],
+    }));
+
+    get().showToast('EcoCash payment proof submitted! Admin will verify and activate your 30-day Pro access.', 'success');
+  },
+
+  verifyAndActivateEcoCashSubscription: async (requestId, userId, tier) => {
+    const adminName = get().userProfile.fullName || get().firebaseUser?.fullName || 'Super Admin';
+    try {
+      await verifyAndActivateSubscription(requestId, userId, tier, adminName);
+    } catch (e) {
+      console.warn('Firestore subscription activation note:', e);
+    }
+    
+    set((s) => {
+      const updatedReqs = s.subscriptionRequests.map(r => 
+        r.id === requestId ? { ...r, status: 'verified' as const, verifiedBy: adminName, verifiedAt: new Date().toISOString() } : r
+      );
+      let nextProfile = s.userProfile;
+      if (s.firebaseUser?.uid === userId) {
+        const renewalDate = new Date();
+        renewalDate.setDate(renewalDate.getDate() + 30);
+        nextProfile = {
+          ...s.userProfile,
+          subscriptionTier: tier,
+          subscriptionStatus: 'active',
+          subscriptionBillingCycle: 'monthly',
+          subscriptionActivatedAt: new Date().toISOString(),
+          subscriptionExpiresAt: renewalDate.toISOString(),
+          subscriptionRenewalDate: renewalDate.toISOString().split('T')[0],
+          autoRenew: true,
+        };
+      }
+      const next = { subscriptionRequests: updatedReqs, userProfile: nextProfile };
+      persistState({ ...s, ...next });
+      return next;
+    });
+    get().showToast(`Subscription activated (${tier.toUpperCase()}) for 30 days!`, 'success');
+  },
+
+  rejectEcoCashSubscription: async (requestId, reason) => {
+    const adminName = get().userProfile.fullName || get().firebaseUser?.fullName || 'Super Admin';
+    try {
+      await rejectSubscriptionRequest(requestId, adminName, reason);
+    } catch (e) {
+      console.warn('Firestore subscription rejection note:', e);
+    }
+    set((s) => {
+      const updatedReqs = s.subscriptionRequests.map(r => 
+        r.id === requestId ? { ...r, status: 'rejected' as const, rejectionReason: reason } : r
+      );
+      const next = { subscriptionRequests: updatedReqs };
+      persistState({ ...s, ...next });
+      return next;
+    });
+    get().showToast('Subscription request rejected', 'info');
   },
 
   // Unsubscribe & Notification Alerts Actions
@@ -1058,6 +1207,74 @@ export const useAppStore = create<AppState>((set, get) => ({
     get().showToast('Appointment cancelled', 'info');
   },
 
+  addCustomFacility: async (facData) => {
+    const s = get();
+    const newFacility: Facility = {
+      ...facData,
+      id: 'fac-' + Date.now(),
+      createdAt: new Date().toISOString(),
+      createdBy: s.firebaseUser?.uid,
+      createdByRole: s.currentUserRole,
+    };
+    try {
+      await createFacilityProfile(newFacility);
+    } catch (e) {
+      console.warn('Facility Firestore sync note:', e);
+    }
+    set((state) => {
+      const next = { customFacilities: [newFacility, ...state.customFacilities] };
+      persistState({ ...state, ...next });
+      return next;
+    });
+    get().showToast(`Facility profile "${newFacility.name}" created successfully`, 'success');
+  },
+
+  loadFacilities: async () => {
+    try {
+      const firestoreFacilities = await fetchAllFacilitiesFromFirestore();
+      if (firestoreFacilities.length > 0) {
+        set((s) => {
+          const next = { customFacilities: firestoreFacilities };
+          persistState({ ...s, ...next });
+          return next;
+        });
+      }
+    } catch (e) {
+      console.warn('Failed to load facilities:', e);
+    }
+  },
+
+  loadFacilityBookings: async () => {
+    try {
+      const bookings = await fetchAllFacilityBookings();
+      set((s) => {
+        const next = { facilityBookingsQueue: bookings };
+        persistState({ ...s, ...next });
+        return next;
+      });
+    } catch (e) {
+      console.warn('Failed to load facility bookings:', e);
+    }
+  },
+
+  scheduleFacilityBookingAction: async (bookingId, scheduledDate, scheduledTime, notes) => {
+    const staffName = get().userProfile.fullName || get().firebaseUser?.fullName || 'Facility Clinician';
+    await scheduleFacilityBooking(bookingId, scheduledDate, scheduledTime, staffName, notes);
+    
+    set((s) => {
+      const updatedBookings = s.facilityBookingsQueue.map(b => 
+        b.id === bookingId ? { ...b, status: 'scheduled' as const, scheduledDate, scheduledTime } : b
+      );
+      const updatedAppointments = s.appointments.map(a => 
+        a.id === bookingId ? { ...a, status: 'confirmed' as const, isWaitingList: false, scheduledDate, scheduledTime, date: scheduledDate, time: scheduledTime } : a
+      );
+      const next = { facilityBookingsQueue: updatedBookings, appointments: updatedAppointments };
+      persistState({ ...s, ...next });
+      return next;
+    });
+    get().showToast(`Booking scheduled for ${scheduledDate} at ${scheduledTime}`, 'success');
+  },
+
   toggleCareTask: (taskId) => {
     set((s) => {
       let nextCompletedState = false;
@@ -1168,6 +1385,247 @@ export const useAppStore = create<AppState>((set, get) => ({
     get().showToast('Progress report submitted and synced', 'success');
   },
 
+  administerPrescribedMedication: async ({ medicationId, medicationName, dosage, route, staffNotes }) => {
+    const state = get();
+    const staffName = state.userProfile.fullName || state.firebaseUser?.fullName || 'Attending Staff';
+    const staffRole = state.currentUserRole;
+    
+    // Decrement remaining units of medication
+    const med = state.medications.find(m => m.id === medicationId);
+    const newRemainingUnits = med ? Math.max(0, med.remainingUnits - 1) : 0;
+    
+    const adminRecord: MedicationAdministrationRecord = {
+      id: 'mar-' + Date.now(),
+      medicationId,
+      medicationName,
+      dosageGiven: dosage,
+      route,
+      administeredAt: new Date().toISOString(),
+      administeredBy: `${staffName} (${staffRole.toUpperCase()})`,
+      prescribedByDoctor: med?.prescribingDoctor || 'Attending Physician',
+      patientResponseNotes: staffNotes || 'Administered according to prescription schedule',
+    };
+
+    const nowTime = new Date().toTimeString().slice(0, 5);
+    const medLog: MedicationLog = {
+      id: 'mlog-' + Date.now(),
+      medicationId,
+      medicationName,
+      scheduledTime: nowTime,
+      actualTime: nowTime,
+      status: 'taken',
+      notes: `Administered by ${staffName} (${staffRole}). ${staffNotes || ''}`,
+      date: new Date().toISOString().split('T')[0],
+    };
+
+    const targetId = state.activeAssignedPatientId || state.firebaseUser?.uid;
+
+    set((s) => {
+      const updatedMeds = s.medications.map(m => m.id === medicationId ? { ...m, remainingUnits: newRemainingUnits } : m);
+      const updatedMAR = [adminRecord, ...(s.carePlan.medicationAdministrations || [])];
+      const nextPlan = { ...s.carePlan, medicationAdministrations: updatedMAR };
+      const audit = createAuditEntry(`Administered Dose: ${medicationName} (${dosage}) by ${staffName}`, 'CLINICAL');
+      const next = {
+        medications: updatedMeds,
+        medicationLogs: [medLog, ...s.medicationLogs],
+        carePlan: nextPlan,
+        auditLogs: [audit, ...s.auditLogs],
+      };
+      persistState({ ...s, ...next });
+      return next;
+    });
+
+    if (targetId) {
+      persistItemToFirestore(targetId, 'medicationAdministrations', adminRecord.id, adminRecord);
+      persistItemToFirestore(targetId, 'medications', medicationId, { remainingUnits: newRemainingUnits });
+      persistItemToFirestore(targetId, 'medicationLogs', medLog.id, medLog);
+      if (state.activeAssignedPatientId) {
+        logStaffActivity(`Administered ${medicationName} (${dosage})`, 'CLINICAL', `Dosage administered to patient ${targetId}. Remaining: ${newRemainingUnits}`);
+      }
+    }
+
+    get().showToast(`Administered ${medicationName} dose. Remaining: ${newRemainingUnits} units.`, 'success');
+  },
+
+  prescribeMedicationDirect: async (medData) => {
+    const s = get();
+    const newMed: Medication = {
+      ...medData,
+      id: 'med-' + Date.now(),
+    };
+    const staffName = s.userProfile.fullName || s.firebaseUser?.fullName || 'Doctor';
+    const audit = createAuditEntry(`Prescribed Medication: ${newMed.name} (${newMed.strength}) by ${staffName}`, 'CLINICAL');
+    
+    set((state) => {
+      const next = {
+        medications: [newMed, ...state.medications],
+        auditLogs: [audit, ...state.auditLogs]
+      };
+      persistState({ ...state, ...next });
+      return next;
+    });
+
+    const targetId = s.activeAssignedPatientId || s.firebaseUser?.uid;
+    if (targetId) {
+      persistItemToFirestore(targetId, 'medications', newMed.id, newMed);
+      if (s.activeAssignedPatientId) {
+        logStaffActivity(`Prescribed Medication: ${newMed.name}`, 'CLINICAL', `Prescription for patient ${targetId}`);
+      }
+    }
+    get().showToast(`Prescription for ${newMed.name} added and saved`, 'success');
+  },
+
+  addProcedureRecommendation: async (procData) => {
+    const s = get();
+    const staffName = s.userProfile.fullName || s.firebaseUser?.fullName || 'Attending Clinician';
+    const newProc: MedicalProcedureRecommendation = {
+      ...procData,
+      id: 'proc-' + Date.now(),
+      createdAt: new Date().toISOString(),
+      recommendedBy: staffName,
+      recommendedByRole: s.currentUserRole,
+    };
+    const targetId = s.activeAssignedPatientId || s.firebaseUser?.uid;
+
+    set((state) => {
+      const updatedProcs = [newProc, ...(state.carePlan.recommendedProcedures || [])];
+      const nextPlan = { ...state.carePlan, recommendedProcedures: updatedProcs };
+      const audit = createAuditEntry(`Recommended Procedure: ${newProc.procedureName} (${newProc.urgency})`, 'CLINICAL');
+      const next = { carePlan: nextPlan, auditLogs: [audit, ...state.auditLogs] };
+      persistState({ ...state, ...next });
+      return next;
+    });
+
+    if (targetId) {
+      persistItemToFirestore(targetId, 'procedures', newProc.id, newProc);
+      if (s.activeAssignedPatientId) {
+        logStaffActivity(`Recommended Procedure: ${newProc.procedureName}`, 'CLINICAL', `Urgency: ${newProc.urgency}`);
+      }
+    }
+    get().showToast(`Medical procedure recommendation saved`, 'success');
+  },
+
+  updateProcedureStatus: async (procId, status, bookingReferenceId) => {
+    set((s) => {
+      const updatedProcs = (s.carePlan.recommendedProcedures || []).map(p => 
+        p.id === procId ? { ...p, status, notes: bookingReferenceId ? `${p.notes || ''} [Booked ref: ${bookingReferenceId}]` : p.notes } : p
+      );
+      const nextPlan = { ...s.carePlan, recommendedProcedures: updatedProcs };
+      const next = { carePlan: nextPlan };
+      persistState({ ...s, ...next });
+      return next;
+    });
+    const targetId = get().activeAssignedPatientId || get().firebaseUser?.uid;
+    if (targetId) {
+      persistItemToFirestore(targetId, 'procedures', procId, { status });
+    }
+    get().showToast(`Procedure status updated to ${status}`, 'info');
+  },
+
+  addHealthyEatingHabit: async (habitData) => {
+    const s = get();
+    const staffName = s.userProfile.fullName || s.firebaseUser?.fullName || 'Clinical Team';
+    const newHabit: HealthyEatingHabit = {
+      ...habitData,
+      id: 'diet-' + Date.now(),
+      createdAt: new Date().toISOString(),
+      createdBy: staffName,
+      createdByRole: s.currentUserRole,
+      isActive: true,
+    };
+    const targetId = s.activeAssignedPatientId || s.firebaseUser?.uid;
+
+    set((state) => {
+      const updated = [newHabit, ...(state.carePlan.healthyEatingHabits || [])];
+      const nextPlan = { ...state.carePlan, healthyEatingHabits: updated };
+      const next = { carePlan: nextPlan };
+      persistState({ ...state, ...next });
+      return next;
+    });
+
+    if (targetId) {
+      persistItemToFirestore(targetId, 'healthyEatingHabits', newHabit.id, newHabit);
+    }
+    get().showToast(`Healthy eating schedule added: ${newHabit.title}`, 'success');
+  },
+
+  toggleHealthyEatingHabit: async (habitId) => {
+    set((s) => {
+      const updated = (s.carePlan.healthyEatingHabits || []).map(h => 
+        h.id === habitId ? { ...h, isActive: !h.isActive } : h
+      );
+      const nextPlan = { ...s.carePlan, healthyEatingHabits: updated };
+      const next = { carePlan: nextPlan };
+      persistState({ ...s, ...next });
+      return next;
+    });
+  },
+
+  addExercisePhysioSchedule: async (exData) => {
+    const s = get();
+    const staffName = s.userProfile.fullName || s.firebaseUser?.fullName || 'Physiotherapist / Clinician';
+    const newEx: ExercisePhysioSchedule = {
+      ...exData,
+      id: 'ex-' + Date.now(),
+      createdAt: new Date().toISOString(),
+      createdBy: staffName,
+      createdByRole: s.currentUserRole,
+      isActive: true,
+    };
+    const targetId = s.activeAssignedPatientId || s.firebaseUser?.uid;
+
+    set((state) => {
+      const updated = [newEx, ...(state.carePlan.exercisePhysioSchedules || [])];
+      const nextPlan = { ...state.carePlan, exercisePhysioSchedules: updated };
+      const next = { carePlan: nextPlan };
+      persistState({ ...state, ...next });
+      return next;
+    });
+
+    if (targetId) {
+      persistItemToFirestore(targetId, 'exercisePhysioSchedules', newEx.id, newEx);
+    }
+    get().showToast(`Physical exercise / physio schedule added: ${newEx.title}`, 'success');
+  },
+
+  toggleExercisePhysioSchedule: async (scheduleId) => {
+    set((s) => {
+      const updated = (s.carePlan.exercisePhysioSchedules || []).map(e => 
+        e.id === scheduleId ? { ...e, isActive: !e.isActive } : e
+      );
+      const nextPlan = { ...s.carePlan, exercisePhysioSchedules: updated };
+      const next = { carePlan: nextPlan };
+      persistState({ ...s, ...next });
+      return next;
+    });
+  },
+
+  addGeneralCareLog: async (logData) => {
+    const s = get();
+    const staffName = s.userProfile.fullName || s.firebaseUser?.fullName || 'Care Worker';
+    const newLog: GeneralCareLog = {
+      ...logData,
+      id: 'care-' + Date.now(),
+      loggedAt: new Date().toISOString(),
+      loggedBy: `${staffName} (${s.currentUserRole.toUpperCase()})`,
+      loggedByRole: s.currentUserRole,
+    };
+    const targetId = s.activeAssignedPatientId || s.firebaseUser?.uid;
+
+    set((state) => {
+      const updated = [newLog, ...(state.carePlan.generalCareLogs || [])];
+      const nextPlan = { ...state.carePlan, generalCareLogs: updated };
+      const next = { carePlan: nextPlan };
+      persistState({ ...state, ...next });
+      return next;
+    });
+
+    if (targetId) {
+      persistItemToFirestore(targetId, 'generalCareLogs', newLog.id, newLog);
+    }
+    get().showToast(`General care activity logged: ${newLog.title}`, 'success');
+  },
+
   triggerManualSync: async () => {
     const { syncQueue } = get();
     if (syncQueue.length === 0) {
@@ -1262,13 +1720,35 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   syncUserDataFromFirestore: async (userId: string) => {
     try {
-      const [vitalsData, medsData, aptsData, recsData, tasksData] = await Promise.all([
+      const [
+        vitalsData, 
+        medsData, 
+        aptsData, 
+        recsData, 
+        tasksData,
+        procsData,
+        habitsData,
+        physioData,
+        careLogsData,
+        marData
+      ] = await Promise.all([
         fetchCollectionFromFirestore<VitalsReading>(userId, 'vitals').catch(() => []),
         fetchCollectionFromFirestore<Medication>(userId, 'medications').catch(() => []),
         fetchCollectionFromFirestore<Appointment>(userId, 'appointments').catch(() => []),
         fetchCollectionFromFirestore<MedicalRecord>(userId, 'records').catch(() => []),
         fetchCollectionFromFirestore<CareTask>(userId, 'tasks').catch(() => []),
+        fetchCollectionFromFirestore<MedicalProcedureRecommendation>(userId, 'procedures').catch(() => []),
+        fetchCollectionFromFirestore<HealthyEatingHabit>(userId, 'healthyEatingHabits').catch(() => []),
+        fetchCollectionFromFirestore<ExercisePhysioSchedule>(userId, 'exercisePhysioSchedules').catch(() => []),
+        fetchCollectionFromFirestore<GeneralCareLog>(userId, 'generalCareLogs').catch(() => []),
+        fetchCollectionFromFirestore<MedicationAdministrationRecord>(userId, 'medicationAdministrations').catch(() => []),
       ]);
+
+      // Also trigger loading facilities, bookings, and subscription requests
+      get().loadFacilities().catch(() => null);
+      get().loadFacilityBookings().catch(() => null);
+      get().loadSubscriptionRequests().catch(() => null);
+
       set((s) => {
         const next = {
           vitals: vitalsData.length > 0 ? vitalsData : s.vitals,
@@ -1278,6 +1758,11 @@ export const useAppStore = create<AppState>((set, get) => ({
           carePlan: {
             ...s.carePlan,
             tasks: tasksData.length > 0 ? tasksData : s.carePlan.tasks,
+            recommendedProcedures: procsData.length > 0 ? procsData : s.carePlan.recommendedProcedures,
+            healthyEatingHabits: habitsData.length > 0 ? habitsData : s.carePlan.healthyEatingHabits,
+            exercisePhysioSchedules: physioData.length > 0 ? physioData : s.carePlan.exercisePhysioSchedules,
+            generalCareLogs: careLogsData.length > 0 ? careLogsData : s.carePlan.generalCareLogs,
+            medicationAdministrations: marData.length > 0 ? marData : s.carePlan.medicationAdministrations,
           }
         };
         persistState({ ...s, ...next });

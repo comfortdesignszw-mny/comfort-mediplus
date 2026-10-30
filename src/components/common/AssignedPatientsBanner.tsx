@@ -28,7 +28,7 @@ export const AssignedPatientsBanner: React.FC = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Only show for clinical staff or admin
-  const isStaff = currentUserRole === 'doctor' || currentUserRole === 'caregiver';
+  const isStaff = currentUserRole === 'doctor' || currentUserRole === 'caregiver' || currentUserRole === 'pharmacist';
   const isAdmin = currentUserRole === 'admin' || isSuperAdmin(firebaseUser?.email);
 
   if (!firebaseUser || (!isStaff && !isAdmin)) {

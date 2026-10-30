@@ -27,8 +27,8 @@
         },
         "role": {
           "type": "string",
-          "description": "User RBAC role: admin, patient, caregiver, or doctor",
-          "enum": ["admin", "patient", "caregiver", "doctor"]
+          "description": "User RBAC role: admin, patient, caregiver, doctor, or pharmacist",
+          "enum": ["admin", "patient", "caregiver", "doctor", "pharmacist"]
         },
         "authProvider": {
           "type": "string",
@@ -287,6 +287,194 @@
         }
       },
       "required": ["id", "action", "category", "timestamp"]
+    },
+    "Facility": {
+      "title": "Facility",
+      "description": "Medical & healthcare facilities profile (Hospitals, Clinics, Pharmacies, Labs, Surgeries, Specialists, Home Care).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "type": {
+          "type": "string",
+          "enum": ["hospital", "clinic", "pharmacy", "laboratory", "specialist", "surgery", "home_care"]
+        },
+        "province": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "city": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "address": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "whatsappNumber": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "operatingHours": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "hasEmergency24_7": {
+          "type": "boolean"
+        },
+        "createdBy": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "required": ["id", "name", "type", "province", "city", "phone"]
+    },
+    "FacilityBooking": {
+      "title": "FacilityBooking",
+      "description": "User facility appointment booking and scheduling queue.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "facilityId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "facilityName": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "patientId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "patientName": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "patientPhone": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "patientEmail": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "date": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "time": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "reasonCategory": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "booked", "confirmed", "checked_in", "completed", "cancelled", "rescheduled"]
+        },
+        "isWaitingList": {
+          "type": "boolean"
+        },
+        "scheduledBy": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "scheduledAt": {
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "required": ["id", "facilityId", "patientId", "patientName", "patientPhone", "status"]
+    },
+    "SubscriptionPaymentRequest": {
+      "title": "SubscriptionPaymentRequest",
+      "description": "User EcoCash proof of payment for Medi+ Pro and Family & Clinic Pro packages.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "userId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "userName": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "userPhone": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "tier": {
+          "type": "string",
+          "enum": ["pro", "family_pro"]
+        },
+        "amountUsd": {
+          "type": "number"
+        },
+        "ecocashTransactionId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "ecocashMessage": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "screenshotUrl": {
+          "type": "string"
+        },
+        "submittedAt": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "verified", "rejected"]
+        },
+        "verifiedAt": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "verifiedBy": {
+          "type": "string",
+          "maxLength": 128
+        }
+      },
+      "required": ["id", "userId", "userName", "userPhone", "tier", "ecocashTransactionId", "status"]
     }
   },
   "firestore": {
@@ -301,6 +489,18 @@
     "/assignments/{assignmentId}": {
       "schema": "PatientAssignment",
       "description": "Admin-assigned patient-to-doctor relationships."
+    },
+    "/facilities/{facilityId}": {
+      "schema": "Facility",
+      "description": "Medical & health facilities directory."
+    },
+    "/facilityBookings/{bookingId}": {
+      "schema": "FacilityBooking",
+      "description": "User appointments and facility booking requests."
+    },
+    "/subscriptionRequests/{requestId}": {
+      "schema": "SubscriptionPaymentRequest",
+      "description": "EcoCash paid subscription verification queue."
     },
     "/users/{userId}/vitals/{vitalId}": {
       "schema": "VitalReading",
