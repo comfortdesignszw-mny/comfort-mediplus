@@ -16,6 +16,38 @@
     <meta name="apple-mobile-web-app-title" content="ComfortMedi" />
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <!-- Suppress benign preview WebSocket / HMR disconnection logs per AI Studio environment constraints -->
+    <script>
+      (function () {
+        var isWsError = function (err) {
+          if (!err) return false;
+          var msg = typeof err === 'string' ? err : (err && err.message) || '';
+          return msg.indexOf('WebSocket') !== -1 || msg.indexOf('closed without opened') !== -1;
+        };
+
+        window.addEventListener('error', function (e) {
+          if (isWsError(e.message) || isWsError(e.error)) {
+            e.stopImmediatePropagation();
+            e.preventDefault();
+          }
+        }, true);
+
+        window.addEventListener('unhandledrejection', function (e) {
+          if (isWsError(e.reason)) {
+            e.stopImmediatePropagation();
+            e.preventDefault();
+          }
+        }, true);
+
+        var origConsoleError = console.error;
+        console.error = function () {
+          for (var i = 0; i < arguments.length; i++) {
+            if (isWsError(arguments[i])) return;
+          }
+          return origConsoleError.apply(console, arguments);
+        };
+      })();
+    </script>
   </head>
   <body class="bg-slate-50 text-slate-900 antialiased selection:bg-teal-500 selection:text-white">
     <div id="root"></div>

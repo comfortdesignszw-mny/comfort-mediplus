@@ -7,21 +7,25 @@ export const AutoWhatsAppAlertToast: React.FC = () => {
   const dismiss = useAppStore(s => s.dismissLastAutoFiredWhatsApp);
   const [secondsRemaining, setSecondsRemaining] = useState(12);
 
+  const alertId = lastAlert?.id;
+
   useEffect(() => {
-    if (!lastAlert) return;
+    if (!alertId) return;
     setSecondsRemaining(12);
-    const interval = setInterval(() => {
-      setSecondsRemaining(prev => {
-        if (prev <= 1) {
-          dismiss();
-          return 0;
-        }
-        return prev - 1;
-      });
+
+    const dismissTimer = setTimeout(() => {
+      dismiss();
+    }, 12000);
+
+    const countdownInterval = setInterval(() => {
+      setSecondsRemaining(prev => Math.max(0, prev - 1));
     }, 1000);
 
-    return () => clearInterval(interval);
-  }, [lastAlert, dismiss]);
+    return () => {
+      clearTimeout(dismissTimer);
+      clearInterval(countdownInterval);
+    };
+  }, [alertId, dismiss]);
 
   if (!lastAlert) return null;
 
@@ -46,17 +50,29 @@ export const AutoWhatsAppAlertToast: React.FC = () => {
       aria-label="Automated WhatsApp reminder notification"
       className="fixed bottom-5 right-5 z-50 max-w-md w-[calc(100vw-2.5rem)] animate-in slide-in-from-bottom-5 fade-in duration-300"
     >
-      <div className="bg-[#0a2540] text-white rounded-3xl shadow-2xl border-2 border-emerald-400/40 p-4 sm:p-5 relative overflow-hidden backdrop-blur-md">
+      <div className="bg-[#0a2540] text-white rounded-3xl shadow-2xl border-2 border-emerald-400/40 relative overflow-hidden backdrop-blur-md">
+        {/* Visual Notification Status Bar */}
+        <div className="bg-emerald-600 text-slate-950 px-4 py-1 text-[10px] font-black uppercase tracking-wider flex items-center justify-between border-b border-emerald-400/30">
+          <div className="flex items-center gap-1.5 font-mono">
+            <span className="w-2 h-2 rounded-full bg-slate-950 animate-ping inline-block" />
+            <span>STATUS BAR: AUTO WHATSAPP DM DISPATCHED</span>
+          </div>
+          <span className="font-mono text-[9px] text-emerald-950">
+            {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+          </span>
+        </div>
+
         {/* Animated Glow Accent */}
         <div className="absolute -right-12 -top-12 w-32 h-32 bg-emerald-500/20 rounded-full blur-2xl pointer-events-none" />
 
-        {/* Top Header */}
-        <div className="flex items-start justify-between gap-3 relative z-10">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-10 h-10 rounded-2xl bg-emerald-500 flex items-center justify-center text-white shrink-0 shadow-lg shadow-emerald-500/30">
-              <MessageSquare className="w-5 h-5 text-white animate-pulse" />
-            </div>
-            <div className="min-w-0">
+        <div className="p-4 sm:p-5">
+          {/* Top Header */}
+          <div className="flex items-start justify-between gap-3 relative z-10">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-10 h-10 rounded-2xl bg-emerald-500 flex items-center justify-center text-white shrink-0 shadow-lg shadow-emerald-500/30">
+                <MessageSquare className="w-5 h-5 text-white animate-pulse" />
+              </div>
+              <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400 flex items-center gap-1">
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping inline-block" />
@@ -115,6 +131,8 @@ export const AutoWhatsAppAlertToast: React.FC = () => {
           >
             Dismiss
           </button>
+        </div>
+
         </div>
 
         {/* Countdown Progress Bar */}

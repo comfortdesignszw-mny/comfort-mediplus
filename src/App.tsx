@@ -23,6 +23,7 @@ import { HomeCareView } from './components/homecare/HomeCareView';
 import { AIHealthAssistantView } from './components/ai/AIHealthAssistantView';
 import { ProfileSettingsView } from './components/profile/ProfileSettingsView';
 import { LandingPageView } from './components/landing/LandingPageView';
+import { MissedRemindersAlertModal } from './components/reminders/MissedRemindersAlertModal';
 
 export default function App() {
   const firebaseUser = useAppStore(s => s.firebaseUser);
@@ -37,6 +38,7 @@ export default function App() {
 
   const showRenewalTermsModal = useAppStore(s => s.showRenewalTermsModal);
   const setShowRenewalTermsModal = useAppStore(s => s.setShowRenewalTermsModal);
+  const setShowRemindersCenterModal = useAppStore(s => s.setShowRemindersCenterModal);
   const fontSize = useAppStore(s => s.fontSize);
   const highContrast = useAppStore(s => s.highContrast);
   const setFirebaseUser = useAppStore(s => s.setFirebaseUser);
@@ -53,6 +55,10 @@ export default function App() {
         } catch (err) {
           console.warn('Firebase user sync note:', err);
         }
+      } else {
+        // User logged out or session ended: ensure all data is cleared and return to overview/home
+        setFirebaseUser(null);
+        setActiveTab('landing');
       }
     });
 
@@ -151,6 +157,11 @@ export default function App() {
       {/* Auto-Fired WhatsApp Notification Toast & Direct Launcher */}
       <AutoWhatsAppAlertToast />
 
+      {/* Proactive Missed Reminders & Dosage Recovery Modal (with status bar) */}
+      <MissedRemindersAlertModal 
+        onOpenRemindersCenter={() => setShowRemindersCenterModal(true)} 
+      />
+
       {/* Top Application Header */}
       <Header 
         activeTab={activeTab}
@@ -162,11 +173,15 @@ export default function App() {
 
       {/* Main Body Content */}
       <main className="flex-1 max-w-6xl w-full mx-auto p-4 sm:p-6 pb-28 sm:pb-32">
-        {activeTab === 'landing' ? (
+        {activeTab === 'landing' || !firebaseUser ? (
           <LandingPageView
             onOpenAuth={(mode) => setShowAuthModal(true, mode)}
             onLaunchApp={() => {
-              setActiveTab('dashboard');
+              if (firebaseUser) {
+                setActiveTab('dashboard');
+              } else {
+                setShowAuthModal(true, 'signin');
+              }
               window.scrollTo({ top: 0, behavior: 'smooth' });
             }}
             onOpenLegal={(tab) => {
@@ -275,8 +290,8 @@ export default function App() {
       {/* Non-intrusive Offline & Sync Queue Indicator */}
       <OfflineIndicator />
 
-      {/* Persistent Floating Bottom Navigation with High Glassmorphism & Cyan Interaction (Workspace Tabs only) */}
-      {activeTab !== 'landing' && (
+      {/* Persistent Floating Bottom Navigation with High Glassmorphism & Cyan Interaction (Authenticated Workspace Tabs only) */}
+      {activeTab !== 'landing' && !!firebaseUser && (
         <BottomNav 
           activeTab={activeTab as TabKey}
           onSelectTab={(tab) => {

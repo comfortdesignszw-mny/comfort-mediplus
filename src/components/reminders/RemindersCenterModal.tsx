@@ -64,6 +64,12 @@ export const RemindersCenterModal: React.FC<RemindersCenterModalProps> = ({
   const fireAutoWhatsAppReminder = useAppStore(s => s.fireAutoWhatsAppReminder);
   const whatsappNotifications = useAppStore(s => s.whatsappNotifications);
 
+  // Read status tracking & red counter clearing
+  const readNotificationIds = useAppStore(s => s.readNotificationIds || []);
+  const markNotificationAsRead = useAppStore(s => s.markNotificationAsRead);
+  const markAllNotificationsAsRead = useAppStore(s => s.markAllNotificationsAsRead);
+  const clearNotificationBadge = useAppStore(s => s.clearNotificationBadge);
+
   const [activeTab, setActiveTab] = useState<'all' | ReminderType | 'whatsapp_auto'>('all');
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [notificationEnabled, setNotificationEnabled] = useState(
@@ -216,6 +222,17 @@ export const RemindersCenterModal: React.FC<RemindersCenterModalProps> = ({
         onClick={(e) => e.stopPropagation()}
         className="w-full max-w-2xl rounded-3xl bg-white shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]"
       >
+        {/* Device & Clinical Status Bar */}
+        <div className="bg-[#051320] text-teal-300 px-4 py-1.5 flex items-center justify-between text-[11px] font-black tracking-wider uppercase border-b border-teal-500/20">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-teal-400 animate-pulse" />
+            <span className="font-mono">STATUS BAR: NOTIFICATION &amp; ADHERENCE CENTER</span>
+          </div>
+          <div className="flex items-center gap-2 font-mono text-[10px] text-teal-400/80">
+            <span>DEVICE TIME: {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+          </div>
+        </div>
+
         {/* Modal Header */}
         <div className="bg-gradient-to-r from-[#0a2540] via-teal-950 to-teal-900 text-white p-5 sm:p-6 relative">
           <button
@@ -247,7 +264,7 @@ export const RemindersCenterModal: React.FC<RemindersCenterModalProps> = ({
             </div>
           </div>
 
-          {/* Quick Audio & Notification Controls */}
+          {/* Quick Audio, Notification Controls & Clear Badge Action */}
           <div className="mt-4 flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-white/10 text-xs">
             <div className="flex items-center gap-3">
               <button
@@ -272,15 +289,29 @@ export const RemindersCenterModal: React.FC<RemindersCenterModalProps> = ({
               </button>
             </div>
 
-            {!notificationEnabled && (
+            <div className="flex items-center gap-2">
               <button
-                onClick={handleEnableNotifications}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold hover:bg-amber-500/30 transition text-[11px]"
+                onClick={() => {
+                  markAllNotificationsAsRead();
+                  showToast('All notifications marked as read. Red counter cleared!', 'success');
+                }}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-teal-500/20 hover:bg-teal-500/30 text-teal-200 border border-teal-500/30 font-bold transition text-[11px]"
+                title="Mark all notifications as read and reset notification counter"
               >
-                <Sparkles className="w-3 h-3 text-amber-400" />
-                <span>Enable Device Push Alerts</span>
+                <Check className="w-3.5 h-3.5 text-teal-300" />
+                <span>Clear Red Badge (Mark Read)</span>
               </button>
-            )}
+
+              {!notificationEnabled && (
+                <button
+                  onClick={handleEnableNotifications}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold hover:bg-amber-500/30 transition text-[11px]"
+                >
+                  <Sparkles className="w-3 h-3 text-amber-400" />
+                  <span>Enable Push Alerts</span>
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Type Tabs */}
@@ -559,24 +590,72 @@ export const RemindersCenterModal: React.FC<RemindersCenterModalProps> = ({
             </div>
           ) : (
             filteredReminders.map((reminder) => {
+              const isMissed = reminder.isMissed;
               const isDueNow = reminder.dueStatus === 'due_now';
               const isOverdue = reminder.dueStatus === 'overdue';
               const isCompleted = reminder.dueStatus === 'completed';
+              const isUnread = !readNotificationIds.includes(reminder.id);
 
               return (
                 <div
                   key={reminder.id}
-                  className={`p-4 rounded-2xl border transition shadow-sm ${
-                    isDueNow
+                  onClick={() => {
+                    if (isUnread) markNotificationAsRead(reminder.id);
+                  }}
+                  className={`rounded-2xl border transition shadow-sm overflow-hidden cursor-pointer ${
+                    isMissed
+                      ? 'bg-rose-50/70 border-rose-300 ring-1 ring-rose-400/20'
+                      : isDueNow
                       ? 'bg-amber-50/80 border-amber-300 ring-2 ring-amber-400/30'
                       : isOverdue
                       ? 'bg-rose-50/80 border-rose-300 ring-1 ring-rose-400/20'
                       : isCompleted
-                      ? 'bg-slate-100/60 border-slate-200 opacity-70'
+                      ? 'bg-slate-100/60 border-slate-200 opacity-75'
                       : 'bg-white border-slate-200'
                   }`}
                 >
-                  <div className="flex items-start justify-between gap-3">
+                  {/* Status Bar for every notification */}
+                  <div className={`px-3 py-1 flex items-center justify-between text-[10px] font-black uppercase tracking-wider border-b ${
+                    isMissed
+                      ? 'bg-rose-600 text-white border-rose-700'
+                      : isDueNow
+                      ? 'bg-amber-500 text-amber-950 border-amber-600'
+                      : isOverdue
+                      ? 'bg-rose-500 text-white border-rose-600'
+                      : isCompleted
+                      ? 'bg-emerald-600 text-white border-emerald-700'
+                      : 'bg-teal-700 text-teal-100 border-teal-800'
+                  }`}>
+                    <div className="flex items-center gap-1.5 font-mono">
+                      <span className={`w-2 h-2 rounded-full ${
+                        isMissed || isDueNow ? 'bg-white animate-ping' : 'bg-white/80'
+                      }`} />
+                      <span>
+                        {isMissed 
+                          ? `STATUS BAR: MISSED • OVERDUE BY ~${reminder.missedMinutesAgo || 30}M` 
+                          : isDueNow 
+                          ? 'STATUS BAR: DUE NOW • ACTION REQUIRED' 
+                          : isOverdue 
+                          ? 'STATUS BAR: OVERDUE • PAST SCHEDULED TIME' 
+                          : isCompleted 
+                          ? 'STATUS BAR: COMPLETED & LOGGED' 
+                          : 'STATUS BAR: UPCOMING SCHEDULED'}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {isUnread && (
+                        <span className="bg-white text-slate-900 px-1.5 py-0.2 rounded-full text-[9px] font-black tracking-normal">
+                          ● UNREAD
+                        </span>
+                      )}
+                      <span className="font-mono text-[9px] opacity-90">
+                        {reminder.targetTimeFormatted}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="p-4 flex items-start justify-between gap-3">
                     {/* Left Icon & Details */}
                     <div className="flex items-start gap-3 min-w-0">
                       <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 shadow-sm ${
@@ -600,7 +679,9 @@ export const RemindersCenterModal: React.FC<RemindersCenterModalProps> = ({
                             {reminder.title}
                           </h4>
                           <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                            isDueNow
+                            isMissed
+                              ? 'bg-rose-200 text-rose-900 font-bold'
+                              : isDueNow
                               ? 'bg-amber-200 text-amber-900 font-bold animate-pulse'
                               : isOverdue
                               ? 'bg-rose-200 text-rose-900'
@@ -608,7 +689,7 @@ export const RemindersCenterModal: React.FC<RemindersCenterModalProps> = ({
                               ? 'bg-slate-200 text-slate-700'
                               : 'bg-teal-100 text-teal-800'
                           }`}>
-                            {isDueNow ? 'Due Now' : isOverdue ? 'Overdue' : isCompleted ? 'Completed' : 'Upcoming'}
+                            {isMissed ? 'Missed' : isDueNow ? 'Due Now' : isOverdue ? 'Overdue' : isCompleted ? 'Completed' : 'Upcoming'}
                           </span>
                         </div>
 
@@ -632,15 +713,18 @@ export const RemindersCenterModal: React.FC<RemindersCenterModalProps> = ({
                     </div>
 
                     {/* Right Action Buttons */}
-                    <div className="flex flex-col items-end gap-1.5 shrink-0">
+                    <div className="flex flex-col items-end gap-1.5 shrink-0" onClick={e => e.stopPropagation()}>
                       {reminder.type === 'medication' && (
                         <button
                           disabled={isCompleted}
-                          onClick={() => handleAdministerMedication(
-                            reminder.metadata.medicationId!,
-                            reminder.time,
-                            reminder.title
-                          )}
+                          onClick={() => {
+                            handleAdministerMedication(
+                              reminder.metadata.medicationId!,
+                              reminder.time,
+                              reminder.title
+                            );
+                            markNotificationAsRead(reminder.id);
+                          }}
                           className={`px-3 py-1.5 rounded-xl font-bold text-xs flex items-center gap-1.5 transition active:scale-95 shadow-sm ${
                             isCompleted
                               ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
@@ -662,6 +746,7 @@ export const RemindersCenterModal: React.FC<RemindersCenterModalProps> = ({
                               if (soundEnabled) playReminderChime();
                               showToast('Logged daily physical activity session!', 'success');
                             }
+                            markNotificationAsRead(reminder.id);
                           }}
                           className={`px-3 py-1.5 rounded-xl font-bold text-xs flex items-center gap-1.5 transition active:scale-95 shadow-sm ${
                             isCompleted
@@ -677,7 +762,10 @@ export const RemindersCenterModal: React.FC<RemindersCenterModalProps> = ({
                       {reminder.type === 'task' && (
                         <button
                           disabled={isCompleted}
-                          onClick={() => handleCompleteTask(reminder.metadata.taskId!, reminder.title)}
+                          onClick={() => {
+                            handleCompleteTask(reminder.metadata.taskId!, reminder.title);
+                            markNotificationAsRead(reminder.id);
+                          }}
                           className={`px-3 py-1.5 rounded-xl font-bold text-xs flex items-center gap-1.5 transition active:scale-95 shadow-sm ${
                             isCompleted
                               ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
@@ -692,6 +780,7 @@ export const RemindersCenterModal: React.FC<RemindersCenterModalProps> = ({
                       {reminder.type === 'appointment' && (
                         <button
                           onClick={() => {
+                            markNotificationAsRead(reminder.id);
                             onClose();
                             onNavigateTab?.('appointments');
                           }}
@@ -704,7 +793,10 @@ export const RemindersCenterModal: React.FC<RemindersCenterModalProps> = ({
 
                       {/* WhatsApp Dispatch Button */}
                       <button
-                        onClick={() => handleSendWhatsAppReminder(reminder)}
+                        onClick={() => {
+                          handleSendWhatsAppReminder(reminder);
+                          markNotificationAsRead(reminder.id);
+                        }}
                         className="text-[11px] text-emerald-700 hover:text-emerald-800 font-semibold flex items-center gap-1 pt-0.5"
                         title="Send prefilled WhatsApp reminder"
                       >

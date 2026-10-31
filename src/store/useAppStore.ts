@@ -57,7 +57,11 @@ import {
   WhatsAppNotificationRecord, 
   buildReminderWhatsAppMessage 
 } from '../lib/whatsappGateway';
-import type { HealthReminder, ReminderType } from '../lib/remindersEngine';
+import { 
+  calculateActiveReminders, 
+  type HealthReminder, 
+  type ReminderType 
+} from '../lib/remindersEngine';
 import { 
   persistItemToFirestore, 
   deleteItemFromFirestore, 
@@ -252,6 +256,16 @@ interface AppState {
   toggleEmailOptOut: (optOut: boolean) => Promise<void>;
   unsubscribeAllAlerts: () => Promise<void>;
   resubscribeAlerts: () => Promise<void>;
+
+  // Notification Seen / Read Tracking & Missed Reminders
+  readNotificationIds: string[];
+  dismissedMissedAlertIds: string[];
+  markNotificationAsRead: (reminderId: string) => void;
+  markAllNotificationsAsRead: (reminderIds?: string[]) => void;
+  clearNotificationBadge: () => void;
+  dismissMissedAlert: (alertId: string) => void;
+  showRemindersCenterModal: boolean;
+  setShowRemindersCenterModal: (show: boolean) => void;
 }
 
 const STORAGE_KEY = 'comfort_medi_plus_v3_clean';
@@ -272,6 +286,7 @@ function loadPersistedState(): Partial<AppState> {
 function persistState(state: Partial<AppState>) {
   if (typeof window === 'undefined') return;
   try {
+    const uid = state.firebaseUser?.uid;
     const subset = {
       userProfile: state.userProfile,
       firebaseUser: state.firebaseUser,
@@ -304,8 +319,21 @@ function persistState(state: Partial<AppState>) {
       autoWhatsAppTriggerEnabled: state.autoWhatsAppTriggerEnabled,
       autoWhatsAppNumber: state.autoWhatsAppNumber,
       firedWhatsAppReminderKeys: state.firedWhatsAppReminderKeys,
+      readNotificationIds: state.readNotificationIds,
+      dismissedMissedAlertIds: state.dismissedMissedAlertIds,
     };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(subset));
+
+    if (uid) {
+      localStorage.setItem(`comfort_medi_user_${uid}`, JSON.stringify(subset));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        firebaseUser: state.firebaseUser,
+        language: state.language,
+        fontSize: state.fontSize,
+        highContrast: state.highContrast,
+      }));
+    } else {
+      localStorage.removeItem(STORAGE_KEY);
+    }
   } catch (err) {
     console.warn('Local storage write warning:', err);
   }
@@ -326,17 +354,56 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => {
       if (user) {
         const audit = createAuditEntry(`Authenticated as ${user.fullName} (${user.role.toUpperCase()})`, 'SECURITY');
+        
+        // Rehydrate user's private local cache if present
+        let userCache: any = {};
+        if (typeof window !== 'undefined') {
+          try {
+            const rawUser = localStorage.getItem(`comfort_medi_user_${user.uid}`);
+            if (rawUser) userCache = JSON.parse(rawUser);
+          } catch (e) {
+            console.warn(e);
+          }
+        }
+
         const next = {
           isAuthenticated: true,
           currentUserRole: user.role,
           firebaseUser: user,
           userProfile: {
-            ...s.userProfile,
-            fullName: user.fullName || s.userProfile.fullName,
-            email: user.email || s.userProfile.email,
-            phoneNumber: user.phoneNumber || s.userProfile.phoneNumber,
+            ...INITIAL_USER_PROFILE,
+            ...(userCache.userProfile || {}),
+            id: user.uid,
+            fullName: user.fullName || userCache.userProfile?.fullName || s.userProfile.fullName,
+            email: user.email || userCache.userProfile?.email || s.userProfile.email,
+            phoneNumber: user.phoneNumber || userCache.userProfile?.phoneNumber || s.userProfile.phoneNumber,
           },
-          auditLogs: [audit, ...s.auditLogs],
+          emergencyContacts: userCache.emergencyContacts || [],
+          allergies: userCache.allergies || [],
+          chronicConditions: userCache.chronicConditions || [],
+          medicalRecords: userCache.medicalRecords || [],
+          documents: userCache.documents || [],
+          vaccinations: userCache.vaccinations || [],
+          medications: userCache.medications || [],
+          medicationLogs: userCache.medicationLogs || [],
+          adherenceStreak: userCache.adherenceStreak || 0,
+          appointments: userCache.appointments || [],
+          carePlan: userCache.carePlan || {
+            ...INITIAL_CARE_PLAN,
+            tasks: [],
+            goals: [],
+            recommendedProcedures: [],
+            healthyEatingHabits: [],
+            exercisePhysioSchedules: [],
+            generalCareLogs: [],
+            medicationAdministrations: [],
+          },
+          careTeam: userCache.careTeam || [],
+          vitals: userCache.vitals || [],
+          progressReports: userCache.progressReports || [],
+          auditLogs: [audit, ...(userCache.auditLogs || s.auditLogs || [])],
+          readNotificationIds: userCache.readNotificationIds || [],
+          dismissedMissedAlertIds: userCache.dismissedMissedAlertIds || [],
         };
         persistState({ ...s, ...next });
         // Automatically trigger cross-device data sync from Firestore
@@ -349,15 +416,60 @@ export const useAppStore = create<AppState>((set, get) => ({
         return next;
       } else {
         const audit = createAuditEntry('Signed out of session', 'SECURITY');
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.removeItem(STORAGE_KEY);
+          } catch (e) {
+            console.warn(e);
+          }
+        }
+        // WIPE ALL PRIVATE PATIENT/DOCTOR/HEALTH DATA ON LOGOUT
         const next = {
           isAuthenticated: false,
           currentUserRole: 'patient' as UserRole,
           firebaseUser: null,
-          auditLogs: [audit, ...s.auditLogs],
+          userProfile: {
+            ...INITIAL_USER_PROFILE,
+            id: '',
+            fullName: '',
+            email: '',
+            phoneNumber: '',
+            allergiesSummary: '',
+            chronicConditionsSummary: '',
+            emergencyContact: '',
+            emergencyPhone: '',
+          },
+          emergencyContacts: [],
+          allergies: [],
+          chronicConditions: [],
+          medicalRecords: [],
+          documents: [],
+          vaccinations: [],
+          medications: [],
+          medicationLogs: [],
+          adherenceStreak: 0,
+          appointments: [],
+          carePlan: {
+            ...INITIAL_CARE_PLAN,
+            tasks: [],
+            goals: [],
+            recommendedProcedures: [],
+            healthyEatingHabits: [],
+            exercisePhysioSchedules: [],
+            generalCareLogs: [],
+            medicationAdministrations: [],
+          },
+          careTeam: [],
+          vitals: [],
+          progressReports: [],
+          auditLogs: [audit],
           assignedPatients: [],
           activeAssignedPatientId: null,
+          whatsappNotifications: [],
+          firedWhatsAppReminderKeys: [],
+          readNotificationIds: [],
+          dismissedMissedAlertIds: [],
         };
-        persistState({ ...s, ...next });
         return next;
       }
     });
@@ -411,6 +523,58 @@ export const useAppStore = create<AppState>((set, get) => ({
   autoWhatsAppNumber: (persisted as any).autoWhatsAppNumber || (persisted as any).userProfile?.phoneNumber || '+263772824132',
   firedWhatsAppReminderKeys: (persisted as any).firedWhatsAppReminderKeys || [],
   lastAutoFiredWhatsApp: null,
+
+  // Notification Seen / Read Tracking & Missed Reminders
+  readNotificationIds: (persisted as any).readNotificationIds || [],
+  dismissedMissedAlertIds: (persisted as any).dismissedMissedAlertIds || [],
+
+  markNotificationAsRead: (reminderId: string) => {
+    set((s) => {
+      if (s.readNotificationIds.includes(reminderId)) return s;
+      const updated = [...s.readNotificationIds, reminderId];
+      const next = { readNotificationIds: updated };
+      persistState({ ...s, ...next });
+      return next;
+    });
+  },
+
+  markAllNotificationsAsRead: (reminderIds?: string[]) => {
+    set((s) => {
+      let updated: string[];
+      if (reminderIds && reminderIds.length > 0) {
+        updated = Array.from(new Set([...s.readNotificationIds, ...reminderIds]));
+      } else {
+        const active = calculateActiveReminders(s.medications, s.medicationLogs, s.appointments, s.carePlan?.tasks || []);
+        updated = Array.from(new Set([...s.readNotificationIds, ...active.map((r: HealthReminder) => r.id)]));
+      }
+      const next = { readNotificationIds: updated };
+      persistState({ ...s, ...next });
+      return next;
+    });
+    get().showToast('Notifications marked as read - badge cleared', 'info');
+  },
+
+  clearNotificationBadge: () => {
+    set((s) => {
+      const active = calculateActiveReminders(s.medications, s.medicationLogs, s.appointments, s.carePlan?.tasks || []);
+      const updated = Array.from(new Set([...s.readNotificationIds, ...active.map((r: HealthReminder) => r.id)]));
+      const next = { readNotificationIds: updated };
+      persistState({ ...s, ...next });
+      return next;
+    });
+  },
+
+  dismissMissedAlert: (alertId: string) => {
+    set((s) => {
+      const updated = Array.from(new Set([...s.dismissedMissedAlertIds, alertId]));
+      const next = { dismissedMissedAlertIds: updated };
+      persistState({ ...s, ...next });
+      return next;
+    });
+  },
+
+  showRemindersCenterModal: false,
+  setShowRemindersCenterModal: (show: boolean) => set({ showRemindersCenterModal: show }),
 
   setAutoWhatsAppTriggerEnabled: (enabled: boolean) => {
     set((s) => {
@@ -1050,11 +1214,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => {
       const updatedMeds = s.medications.map(m => m.id === medId ? { ...m, remainingUnits: remaining } : m);
       const nextStreak = s.adherenceStreak + 1;
+      const reminderKey = `med-${medId}-${scheduledTime}`;
       const next = {
         medications: updatedMeds,
         medicationLogs: [newLog, ...s.medicationLogs],
         adherenceStreak: nextStreak,
         auditLogs: [audit, ...s.auditLogs],
+        readNotificationIds: Array.from(new Set([...s.readNotificationIds, reminderKey])),
+        dismissedMissedAlertIds: Array.from(new Set([...s.dismissedMissedAlertIds, reminderKey])),
       };
       persistState({ ...s, ...next });
 
@@ -1292,7 +1459,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       });
 
       const nextPlan = { ...s.carePlan, tasks: updatedTasks };
-      const next = { carePlan: nextPlan };
+      const taskKey = `task-${taskId}`;
+      const exerciseKey = `exercise-${taskId}`;
+      const next = { 
+        carePlan: nextPlan,
+        readNotificationIds: Array.from(new Set([...s.readNotificationIds, taskKey, exerciseKey])),
+        dismissedMissedAlertIds: Array.from(new Set([...s.dismissedMissedAlertIds, taskKey, exerciseKey])),
+      };
       persistState({ ...s, ...next });
 
       const targetId = s.activeAssignedPatientId || s.firebaseUser?.uid;

@@ -2,7 +2,7 @@ import { Medication, MedicationLog, Appointment, CareTask } from '../types';
 
 export type ReminderType = 'medication' | 'exercise' | 'appointment' | 'task';
 
-export type DueStatus = 'due_now' | 'upcoming' | 'overdue' | 'completed';
+export type DueStatus = 'due_now' | 'upcoming' | 'overdue' | 'missed' | 'completed';
 
 export interface HealthReminder {
   id: string;
@@ -12,6 +12,8 @@ export interface HealthReminder {
   time: string; // e.g. "08:00" or "Today 10:30"
   targetTimeFormatted: string;
   dueStatus: DueStatus;
+  isMissed?: boolean;
+  missedMinutesAgo?: number;
   urgency: 'high' | 'medium' | 'low';
   metadata: {
     medicationId?: string;
@@ -83,19 +85,48 @@ export async function requestNotificationPermission(): Promise<boolean> {
 }
 
 /**
- * Sends a native browser notification if permitted
+ * Sends a native device push notification with status bar icon, vibration and wakeup
  */
-export function sendBrowserNotification(title: string, body: string): void {
+export async function sendBrowserNotification(
+  title: string, 
+  body: string,
+  options?: {
+    tag?: string;
+    isMissed?: boolean;
+    data?: any;
+  }
+): Promise<void> {
   if (typeof window === 'undefined' || !('Notification' in window)) return;
   if (Notification.permission === 'granted') {
     try {
+      // 1. Try Service Worker showNotification for persistent status bar drawer icon
+      if ('serviceWorker' in navigator) {
+        const reg = await navigator.serviceWorker.getRegistration();
+        if (reg && reg.showNotification) {
+          await reg.showNotification(title, {
+            body,
+            icon: '/pwa-192x192.png',
+            badge: '/pwa-192x192.png', // Device system status bar icon
+            tag: options?.tag || (options?.isMissed ? 'comfortmedi-missed' : 'comfortmedi-reminder'),
+            renotify: true, // Wakes up device screen / triggers vibration
+            requireInteraction: true, // Keeps in system status bar drawer until acted upon
+            vibrate: [200, 100, 200, 100, 200], // Wake-up haptic vibration
+            data: options?.data || { url: window.location.href },
+          } as any);
+          return;
+        }
+      }
+
+      // 2. Fallback to standard web notification constructor
       new Notification(title, {
         body,
-        icon: '/icon.svg',
-        badge: '/icon.svg',
-      });
+        icon: '/pwa-192x192.png',
+        badge: '/pwa-192x192.png',
+        tag: options?.tag || (options?.isMissed ? 'comfortmedi-missed' : 'comfortmedi-reminder'),
+        requireInteraction: true,
+      } as any);
     } catch {
-      // Fallback in environments where Notification constructor is restricted
+      // Ignore background notification restrictions
     }
   }
 }
@@ -138,13 +169,18 @@ export function calculateActiveReminders(
 
       let dueStatus: DueStatus = 'upcoming';
       let urgency: 'high' | 'medium' | 'low' = 'medium';
+      let isMissed = false;
+      let missedMinutesAgo = 0;
 
       if (wasTaken) {
         dueStatus = 'completed';
         urgency = 'low';
       } else if (diffMinutes > 30) {
-        dueStatus = 'overdue';
+        // Scheduled time has passed by more than 30 mins and was not taken -> Missed!
+        dueStatus = 'missed';
         urgency = 'high';
+        isMissed = true;
+        missedMinutesAgo = diffMinutes;
       } else if (diffMinutes >= -45 && diffMinutes <= 30) {
         dueStatus = 'due_now';
         urgency = 'high';
@@ -156,11 +192,15 @@ export function calculateActiveReminders(
       reminders.push({
         id: `med-${med.id}-${scheduledTime}`,
         type: 'medication',
-        title: `Administer ${med.name} (${med.strength})`,
-        subtitle: `${med.dosage} • ${med.instructions || 'Take as prescribed'}`,
+        title: isMissed ? `Missed Dose: ${med.name} (${med.strength})` : `Administer ${med.name} (${med.strength})`,
+        subtitle: isMissed 
+          ? `⚠️ Missed by ${Math.floor(missedMinutesAgo / 60) > 0 ? `${Math.floor(missedMinutesAgo / 60)}h ` : ''}${missedMinutesAgo % 60}m • ${med.dosage} was due at ${scheduledTime}`
+          : `${med.dosage} • ${med.instructions || 'Take as prescribed'}`,
         time: scheduledTime,
         targetTimeFormatted: `Today at ${scheduledTime}`,
         dueStatus,
+        isMissed,
+        missedMinutesAgo,
         urgency,
         metadata: {
           medicationId: med.id,
@@ -168,7 +208,7 @@ export function calculateActiveReminders(
           instructions: med.instructions,
           remainingUnits: med.remainingUnits,
         },
-        actionLabel: wasTaken ? 'Administered' : 'Mark Administered',
+        actionLabel: wasTaken ? 'Administered' : isMissed ? 'Take Missed Dose' : 'Mark Administered',
         isCompleted: wasTaken
       });
     });
@@ -301,11 +341,15 @@ export function calculateActiveReminders(
 
     let dueStatus: DueStatus = task.completed ? 'completed' : 'upcoming';
     let urgency: 'high' | 'medium' | 'low' = 'medium';
+    let isMissed = false;
+    let missedMinutesAgo = 0;
 
     if (!task.completed) {
       if (diffMinutes > 60) {
-        dueStatus = 'overdue';
+        dueStatus = 'missed';
         urgency = 'high';
+        isMissed = true;
+        missedMinutesAgo = diffMinutes;
       } else if (diffMinutes >= -45 && diffMinutes <= 60) {
         dueStatus = 'due_now';
         urgency = 'high';
@@ -315,27 +359,32 @@ export function calculateActiveReminders(
     reminders.push({
       id: `task-${task.id}`,
       type: 'task',
-      title: task.title,
-      subtitle: `Care Plan Task • Assigned to ${task.assignedTo || 'Patient/Caregiver'}`,
+      title: isMissed ? `Missed Task: ${task.title}` : task.title,
+      subtitle: isMissed
+        ? `⚠️ Missed by ${Math.floor(missedMinutesAgo / 60) > 0 ? `${Math.floor(missedMinutesAgo / 60)}h ` : ''}${missedMinutesAgo % 60}m • Scheduled for ${task.timeOfDay || '12:00'}`
+        : `Care Plan Task • Assigned to ${task.assignedTo || 'Patient/Caregiver'}`,
       time: task.timeOfDay || '12:00',
       targetTimeFormatted: `Today at ${task.timeOfDay || '12:00'}`,
       dueStatus,
+      isMissed,
+      missedMinutesAgo,
       urgency,
       metadata: {
         taskId: task.id,
         category: task.category
       },
-      actionLabel: task.completed ? 'Completed' : 'Mark Task Complete',
+      actionLabel: task.completed ? 'Completed' : isMissed ? 'Mark Missed Task Done' : 'Mark Task Complete',
       isCompleted: task.completed
     });
   });
 
-  // Sort reminders: due_now & overdue first, then upcoming, completed last
+  // Sort reminders: due_now & missed first, then overdue, upcoming, completed last
   const statusPriority: Record<DueStatus, number> = {
     due_now: 1,
-    overdue: 2,
-    upcoming: 3,
-    completed: 4
+    missed: 2,
+    overdue: 3,
+    upcoming: 4,
+    completed: 5
   };
 
   return reminders.sort((a, b) => {

@@ -54,8 +54,12 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, onNavigateTab }) => {
   const [showAccountModal, setShowAccountModal] = useState(false);
   const [showAdminModal, setShowAdminModal] = useState(false);
   const [showRemindersModal, setShowRemindersModal] = useState(false);
+  const showRemindersCenterModal = useAppStore(s => s.showRemindersCenterModal);
+  const setShowRemindersCenterModal = useAppStore(s => s.setShowRemindersCenterModal);
   const [showLangMenu, setShowLangMenu] = useState(false);
   const [showAccessMenu, setShowAccessMenu] = useState(false);
+
+  const readNotificationIds = useAppStore(s => s.readNotificationIds);
 
   const allReminders = calculateActiveReminders(
     medications,
@@ -63,9 +67,13 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, onNavigateTab }) => {
     appointments,
     carePlan?.tasks || []
   );
-  const dueRemindersCount = allReminders.filter(
-    r => (r.dueStatus === 'due_now' || r.dueStatus === 'overdue') && !r.isCompleted
-  ).length;
+  // Red counter strictly counts active due/missed/overdue reminders that user has NOT marked read or done
+  const unreadAlerts = allReminders.filter(
+    r => !r.isCompleted && 
+         !readNotificationIds.includes(r.id) && 
+         (r.dueStatus === 'due_now' || r.dueStatus === 'overdue' || r.dueStatus === 'missed')
+  );
+  const dueRemindersCount = unreadAlerts.length;
 
   const t = getTranslation(language);
 
@@ -96,7 +104,10 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, onNavigateTab }) => {
       await logout();
       setFirebaseUser(null);
       setShowAccountModal(false);
-      showToast('Signed out of session successfully', 'info');
+      if (onNavigateTab) {
+        onNavigateTab('landing');
+      }
+      showToast('Signed out of session successfully. All health data secured.', 'info');
     } catch (err: any) {
       console.error('Logout error:', err);
       showToast('Failed to sign out cleanly', 'error');
@@ -515,8 +526,11 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, onNavigateTab }) => {
 
       {/* Global Health & Clinical Reminders Center */}
       <RemindersCenterModal
-        isOpen={showRemindersModal}
-        onClose={() => setShowRemindersModal(false)}
+        isOpen={showRemindersModal || showRemindersCenterModal}
+        onClose={() => {
+          setShowRemindersModal(false);
+          setShowRemindersCenterModal(false);
+        }}
         onNavigateTab={onNavigateTab}
       />
     </header>
