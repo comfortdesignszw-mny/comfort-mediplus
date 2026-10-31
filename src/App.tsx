@@ -78,18 +78,31 @@ export default function App() {
 
     const checkAndAutoTriggerReminders = () => {
       const state = useAppStore.getState();
-      // Allow detection in authenticated mode or guest/demo mode
+      const todayStr = new Date().toISOString().split('T')[0];
+      const accountId = state.firebaseUser?.uid || 'guest';
+      const accountDailyKey = `comfortmedi_daily_notif_${accountId}_${todayStr}`;
+
+      // Enforce: exactly one fired daily reminder notification per account per day, and no repeated daily notifications
+      const alreadyFiredTodayForAccount = 
+        state.lastDailyReminderFiredDate === todayStr ||
+        (typeof window !== 'undefined' && localStorage.getItem(accountDailyKey) === 'true');
+
+      if (alreadyFiredTodayForAccount) {
+        return;
+      }
+
+      // Calculate active reminders taking into account items already handled/reset for today
       const activeReminders = calculateActiveReminders(
         state.medications,
         state.medicationLogs,
         state.appointments,
-        state.carePlan?.tasks || []
+        state.carePlan?.tasks || [],
+        state.dailyHandledReminderKeys || []
       );
 
-      const todayStr = new Date().toISOString().split('T')[0];
       // Detect all reminders that are due now or overdue and not completed
       const dueList = activeReminders.filter(
-        r => (r.dueStatus === 'due_now' || r.dueStatus === 'overdue') && !r.isCompleted
+        r => (r.dueStatus === 'due_now' || r.dueStatus === 'overdue' || r.dueStatus === 'missed') && !r.isCompleted
       );
 
       for (const reminder of dueList) {
@@ -98,6 +111,9 @@ export default function App() {
 
         if (!alreadyFired) {
           notifiedKeys.add(triggerKey);
+
+          // Lock daily notification for this account for today (waits 24h)
+          state.setLastDailyReminderFiredDate(todayStr);
 
           // 1. Play hospital-grade audio chime
           playReminderChime();
@@ -116,7 +132,7 @@ export default function App() {
             state.showToast(`🔔 Reminder: ${reminder.title} is due now!`, 'info');
           }
 
-          // Throttle to one auto-trigger per check tick
+          // Exactly one fired daily notification per account per day
           break;
         }
       }

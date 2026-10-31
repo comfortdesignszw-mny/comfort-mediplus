@@ -266,6 +266,14 @@ interface AppState {
   dismissMissedAlert: (alertId: string) => void;
   showRemindersCenterModal: boolean;
   setShowRemindersCenterModal: (show: boolean) => void;
+
+  // Daily Reminder 24h Throttle & Reset Controls
+  lastDailyReminderFiredDate: string | null;
+  dailyHandledReminderKeys: string[];
+  lastMissedAlertDismissedDate: string | null;
+  setLastDailyReminderFiredDate: (dateStr: string) => void;
+  handleDailyReminderClick: (reminderId: string) => void;
+  resetReminderForDay: (reminderId: string) => void;
 }
 
 const STORAGE_KEY = 'comfort_medi_plus_v3_clean';
@@ -275,7 +283,19 @@ function loadPersistedState(): Partial<AppState> {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
-      return JSON.parse(raw);
+      const base = JSON.parse(raw);
+      if (base.firebaseUser?.uid) {
+        const userRaw = localStorage.getItem(`comfort_medi_user_${base.firebaseUser.uid}`);
+        if (userRaw) {
+          try {
+            const userCache = JSON.parse(userRaw);
+            return { ...userCache, ...base };
+          } catch {
+            return base;
+          }
+        }
+      }
+      return base;
     }
   } catch (err) {
     console.error('Failed to load local storage:', err);
@@ -321,6 +341,9 @@ function persistState(state: Partial<AppState>) {
       firedWhatsAppReminderKeys: state.firedWhatsAppReminderKeys,
       readNotificationIds: state.readNotificationIds,
       dismissedMissedAlertIds: state.dismissedMissedAlertIds,
+      lastDailyReminderFiredDate: state.lastDailyReminderFiredDate,
+      dailyHandledReminderKeys: state.dailyHandledReminderKeys,
+      lastMissedAlertDismissedDate: state.lastMissedAlertDismissedDate,
     };
 
     if (uid) {
@@ -404,6 +427,9 @@ export const useAppStore = create<AppState>((set, get) => ({
           auditLogs: [audit, ...(userCache.auditLogs || s.auditLogs || [])],
           readNotificationIds: userCache.readNotificationIds || [],
           dismissedMissedAlertIds: userCache.dismissedMissedAlertIds || [],
+          lastDailyReminderFiredDate: userCache.lastDailyReminderFiredDate || null,
+          dailyHandledReminderKeys: userCache.dailyHandledReminderKeys || [],
+          lastMissedAlertDismissedDate: userCache.lastMissedAlertDismissedDate || null,
         };
         persistState({ ...s, ...next });
         // Automatically trigger cross-device data sync from Firestore
@@ -469,6 +495,9 @@ export const useAppStore = create<AppState>((set, get) => ({
           firedWhatsAppReminderKeys: [],
           readNotificationIds: [],
           dismissedMissedAlertIds: [],
+          lastDailyReminderFiredDate: null,
+          dailyHandledReminderKeys: [],
+          lastMissedAlertDismissedDate: null,
         };
         return next;
       }
@@ -575,6 +604,47 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   showRemindersCenterModal: false,
   setShowRemindersCenterModal: (show: boolean) => set({ showRemindersCenterModal: show }),
+
+  lastDailyReminderFiredDate: (persisted as any).lastDailyReminderFiredDate || null,
+  dailyHandledReminderKeys: (persisted as any).dailyHandledReminderKeys || [],
+  lastMissedAlertDismissedDate: (persisted as any).lastMissedAlertDismissedDate || null,
+
+  setLastDailyReminderFiredDate: (dateStr: string) => {
+    set((s) => {
+      const next = { lastDailyReminderFiredDate: dateStr };
+      persistState({ ...s, ...next });
+      return next;
+    });
+    if (typeof window !== 'undefined') {
+      const uid = get().firebaseUser?.uid || 'guest';
+      try {
+        localStorage.setItem(`comfortmedi_daily_notif_${uid}_${dateStr}`, 'true');
+      } catch (e) {
+        console.warn(e);
+      }
+    }
+  },
+
+  handleDailyReminderClick: (reminderId: string) => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const key = `${reminderId}_${todayStr}`;
+    set((s) => {
+      const updatedHandled = Array.from(new Set([...(s.dailyHandledReminderKeys || []), key, reminderId]));
+      const updatedRead = Array.from(new Set([...(s.readNotificationIds || []), reminderId]));
+      const updatedDismissed = Array.from(new Set([...(s.dismissedMissedAlertIds || []), reminderId]));
+      const next = {
+        dailyHandledReminderKeys: updatedHandled,
+        readNotificationIds: updatedRead,
+        dismissedMissedAlertIds: updatedDismissed,
+      };
+      persistState({ ...s, ...next });
+      return next;
+    });
+  },
+
+  resetReminderForDay: (reminderId: string) => {
+    get().handleDailyReminderClick(reminderId);
+  },
 
   setAutoWhatsAppTriggerEnabled: (enabled: boolean) => {
     set((s) => {
@@ -1215,6 +1285,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const updatedMeds = s.medications.map(m => m.id === medId ? { ...m, remainingUnits: remaining } : m);
       const nextStreak = s.adherenceStreak + 1;
       const reminderKey = `med-${medId}-${scheduledTime}`;
+      const todayStr = new Date().toISOString().split('T')[0];
       const next = {
         medications: updatedMeds,
         medicationLogs: [newLog, ...s.medicationLogs],
@@ -1222,6 +1293,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         auditLogs: [audit, ...s.auditLogs],
         readNotificationIds: Array.from(new Set([...s.readNotificationIds, reminderKey])),
         dismissedMissedAlertIds: Array.from(new Set([...s.dismissedMissedAlertIds, reminderKey])),
+        dailyHandledReminderKeys: Array.from(new Set([...(s.dailyHandledReminderKeys || []), reminderKey, `${reminderKey}_${todayStr}`])),
       };
       persistState({ ...s, ...next });
 
@@ -1461,10 +1533,18 @@ export const useAppStore = create<AppState>((set, get) => ({
       const nextPlan = { ...s.carePlan, tasks: updatedTasks };
       const taskKey = `task-${taskId}`;
       const exerciseKey = `exercise-${taskId}`;
+      const todayStr = new Date().toISOString().split('T')[0];
       const next = { 
         carePlan: nextPlan,
         readNotificationIds: Array.from(new Set([...s.readNotificationIds, taskKey, exerciseKey])),
         dismissedMissedAlertIds: Array.from(new Set([...s.dismissedMissedAlertIds, taskKey, exerciseKey])),
+        dailyHandledReminderKeys: Array.from(new Set([
+          ...(s.dailyHandledReminderKeys || []),
+          taskKey,
+          `${taskKey}_${todayStr}`,
+          exerciseKey,
+          `${exerciseKey}_${todayStr}`
+        ])),
       };
       persistState({ ...s, ...next });
 

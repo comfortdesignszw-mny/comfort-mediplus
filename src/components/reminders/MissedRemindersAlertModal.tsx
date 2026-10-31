@@ -31,25 +31,34 @@ export const MissedRemindersAlertModal: React.FC<MissedRemindersAlertModalProps>
   const showToast = useAppStore(s => s.showToast);
 
   const dismissedMissedAlertIds = useAppStore(s => s.dismissedMissedAlertIds || []);
+  const dailyHandledReminderKeys = useAppStore(s => s.dailyHandledReminderKeys || []);
+  const lastMissedAlertDismissedDate = useAppStore(s => s.lastMissedAlertDismissedDate);
+  const handleDailyReminderClick = useAppStore(s => s.handleDailyReminderClick);
   const dismissMissedAlert = useAppStore(s => s.dismissMissedAlert);
   const markNotificationAsRead = useAppStore(s => s.markNotificationAsRead);
   const markAllNotificationsAsRead = useAppStore(s => s.markAllNotificationsAsRead);
 
-  // Compute active reminders using current device time
+  const todayStr = new Date().toISOString().split('T')[0];
+
+  // If the user already dismissed or cleared missed alerts today, do not repeatedly show on app open
+  if (!firebaseUser || lastMissedAlertDismissedDate === todayStr) return null;
+
+  // Compute active reminders using current device time and daily handled items
   const allReminders = calculateActiveReminders(
     medications,
     medicationLogs,
     appointments,
-    carePlan?.tasks || []
+    carePlan?.tasks || [],
+    dailyHandledReminderKeys
   );
 
-  // Find missed reminders not yet dismissed in this session
+  // Find missed reminders not yet dismissed or handled for today
   const missedList = allReminders.filter(
     r => r.isMissed && !r.isCompleted && !dismissedMissedAlertIds.includes(r.id)
   );
 
   // Only show when authenticated and there are unrecorded missed tasks
-  if (!firebaseUser || missedList.length === 0) return null;
+  if (missedList.length === 0) return null;
 
   const handleMarkDone = (reminder: any) => {
     if (reminder.type === 'medication' && reminder.metadata?.medicationId) {
@@ -62,10 +71,12 @@ export const MissedRemindersAlertModal: React.FC<MissedRemindersAlertModalProps>
       showToast(`Acknowledged missed reminder: ${reminder.title}`, 'info');
     }
 
+    // Reset reminder for today and wait 24h for next cycle
+    handleDailyReminderClick(reminder.id);
     markNotificationAsRead(reminder.id);
     dismissMissedAlert(reminder.id);
     playReminderChime();
-    showToast(`Marked "${reminder.title}" as completed. Notification badge updated!`, 'success');
+    showToast(`Marked "${reminder.title}" as completed. Reset for 24 hrs!`, 'success');
   };
 
   const handleMarkAllDone = () => {
@@ -75,16 +86,23 @@ export const MissedRemindersAlertModal: React.FC<MissedRemindersAlertModalProps>
       } else if (r.metadata?.taskId) {
         toggleCareTask(r.metadata.taskId);
       }
+      handleDailyReminderClick(r.id);
       dismissMissedAlert(r.id);
     });
 
+    useAppStore.setState({ lastMissedAlertDismissedDate: todayStr });
     markAllNotificationsAsRead();
     playReminderChime();
-    showToast(`All ${missedList.length} missed reminders marked as done! Red counter cleared.`, 'success');
+    showToast(`All ${missedList.length} missed reminders marked as done! Reset for today.`, 'success');
   };
 
   const handleDismissAll = () => {
-    missedList.forEach(r => dismissMissedAlert(r.id));
+    missedList.forEach(r => {
+      handleDailyReminderClick(r.id);
+      dismissMissedAlert(r.id);
+    });
+    useAppStore.setState({ lastMissedAlertDismissedDate: todayStr });
+    showToast('Missed reminders dismissed for today. Waiting 24h for next cycle.', 'info');
   };
 
   return (

@@ -5,6 +5,7 @@ import { MessageSquare, ExternalLink, X, Check, BellRing, Smartphone, ShieldChec
 export const AutoWhatsAppAlertToast: React.FC = () => {
   const lastAlert = useAppStore(s => s.lastAutoFiredWhatsApp);
   const dismiss = useAppStore(s => s.dismissLastAutoFiredWhatsApp);
+  const handleDailyReminderClick = useAppStore(s => s.handleDailyReminderClick);
   const [secondsRemaining, setSecondsRemaining] = useState(12);
 
   const alertId = lastAlert?.id;
@@ -32,6 +33,16 @@ export const AutoWhatsAppAlertToast: React.FC = () => {
   const handleOpenWhatsApp = () => {
     if (typeof window !== 'undefined') {
       window.open(lastAlert.deepLinkUrl, '_blank', 'noopener,noreferrer');
+    }
+    if (lastAlert.id) {
+      handleDailyReminderClick(lastAlert.id);
+    }
+    dismiss();
+  };
+
+  const handleDismiss = () => {
+    if (lastAlert.id) {
+      handleDailyReminderClick(lastAlert.id);
     }
     dismiss();
   };
@@ -89,7 +100,7 @@ export const AutoWhatsAppAlertToast: React.FC = () => {
           </div>
 
           <button
-            onClick={dismiss}
+            onClick={handleDismiss}
             className="p-1 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white transition shrink-0"
             title="Dismiss notification"
           >
@@ -126,7 +137,7 @@ export const AutoWhatsAppAlertToast: React.FC = () => {
           </button>
 
           <button
-            onClick={dismiss}
+            onClick={handleDismiss}
             className="py-2.5 px-3 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs transition"
           >
             Dismiss

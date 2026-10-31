@@ -139,7 +139,8 @@ export function calculateActiveReminders(
   medications: Medication[] = [],
   medicationLogs: MedicationLog[] = [],
   appointments: Appointment[] = [],
-  careTasks: CareTask[] = []
+  careTasks: CareTask[] = [],
+  dailyHandledReminderKeys: string[] = []
 ): HealthReminder[] {
   const reminders: HealthReminder[] = [];
   const now = new Date();
@@ -153,11 +154,18 @@ export function calculateActiveReminders(
     return parseInt(parts[0] || '0', 10) * 60 + parseInt(parts[1] || '0', 10);
   };
 
+  // Helper to check if a reminder was clicked, marked, or acknowledged today
+  const isHandledToday = (id: string): boolean => {
+    return dailyHandledReminderKeys.includes(id) ||
+           dailyHandledReminderKeys.includes(`${id}_${todayStr}`);
+  };
+
   // 1. MEDICATION ADMINISTER REMINDERS
   medications.filter(m => m.active).forEach(med => {
     (med.scheduledTimes || []).forEach(scheduledTime => {
       const scheduledMinutes = parseTimeToMinutes(scheduledTime);
       const diffMinutes = currentMinutes - scheduledMinutes;
+      const reminderId = `med-${med.id}-${scheduledTime}`;
 
       // Check if already taken today for this scheduled time
       const wasTaken = medicationLogs.some(
@@ -167,14 +175,17 @@ export function calculateActiveReminders(
                log.status === 'taken'
       );
 
+      const handled = wasTaken || isHandledToday(reminderId);
+
       let dueStatus: DueStatus = 'upcoming';
       let urgency: 'high' | 'medium' | 'low' = 'medium';
       let isMissed = false;
       let missedMinutesAgo = 0;
 
-      if (wasTaken) {
+      if (handled) {
         dueStatus = 'completed';
         urgency = 'low';
+        isMissed = false;
       } else if (diffMinutes > 30) {
         // Scheduled time has passed by more than 30 mins and was not taken -> Missed!
         dueStatus = 'missed';
@@ -190,10 +201,12 @@ export function calculateActiveReminders(
       }
 
       reminders.push({
-        id: `med-${med.id}-${scheduledTime}`,
+        id: reminderId,
         type: 'medication',
         title: isMissed ? `Missed Dose: ${med.name} (${med.strength})` : `Administer ${med.name} (${med.strength})`,
-        subtitle: isMissed 
+        subtitle: handled
+          ? `${med.dosage} • Done for today (Next reminder in 24 hrs)`
+          : isMissed 
           ? `⚠️ Missed by ${Math.floor(missedMinutesAgo / 60) > 0 ? `${Math.floor(missedMinutesAgo / 60)}h ` : ''}${missedMinutesAgo % 60}m • ${med.dosage} was due at ${scheduledTime}`
           : `${med.dosage} • ${med.instructions || 'Take as prescribed'}`,
         time: scheduledTime,
@@ -208,8 +221,8 @@ export function calculateActiveReminders(
           instructions: med.instructions,
           remainingUnits: med.remainingUnits,
         },
-        actionLabel: wasTaken ? 'Administered' : isMissed ? 'Take Missed Dose' : 'Mark Administered',
-        isCompleted: wasTaken
+        actionLabel: handled ? 'Administered' : isMissed ? 'Take Missed Dose' : 'Mark Administered',
+        isCompleted: handled
       });
     });
   });
@@ -224,11 +237,13 @@ export function calculateActiveReminders(
   exerciseTasks.forEach(task => {
     const taskMinutes = parseTimeToMinutes(task.timeOfDay || '10:00');
     const diffMinutes = currentMinutes - taskMinutes;
+    const reminderId = `exercise-${task.id}`;
+    const handled = task.completed || isHandledToday(reminderId);
 
-    let dueStatus: DueStatus = task.completed ? 'completed' : 'upcoming';
+    let dueStatus: DueStatus = handled ? 'completed' : 'upcoming';
     let urgency: 'high' | 'medium' | 'low' = 'medium';
 
-    if (!task.completed) {
+    if (!handled) {
       if (diffMinutes > 45) {
         dueStatus = 'overdue';
         urgency = 'medium';
@@ -239,22 +254,24 @@ export function calculateActiveReminders(
     }
 
     reminders.push({
-      id: `exercise-${task.id}`,
+      id: reminderId,
       type: 'exercise',
       title: task.title,
-      subtitle: `Target: ${task.timeOfDay || 'Today'} • Recommended for cardiovascular & joint mobility`,
+      subtitle: handled 
+        ? `Target: ${task.timeOfDay || 'Today'} • Completed for today (Next reminder in 24 hrs)` 
+        : `Target: ${task.timeOfDay || 'Today'} • Recommended for cardiovascular & joint mobility`,
       time: task.timeOfDay || '10:00',
       targetTimeFormatted: `Today at ${task.timeOfDay || '10:00'}`,
       dueStatus,
-      urgency,
+      urgency: handled ? 'low' : urgency,
       metadata: {
         taskId: task.id,
         category: task.category,
         durationMinutes: 15,
         guidance: 'Maintain steady breathing, drink water, and stop if you experience pain.'
       },
-      actionLabel: task.completed ? 'Completed' : 'Mark Exercise Done',
-      isCompleted: task.completed
+      actionLabel: handled ? 'Completed' : 'Mark Exercise Done',
+      isCompleted: handled
     });
   });
 
@@ -263,23 +280,28 @@ export function calculateActiveReminders(
     const defaultExerciseTime = '09:30';
     const exerciseMinutes = parseTimeToMinutes(defaultExerciseTime);
     const diff = currentMinutes - exerciseMinutes;
-    const dueStatus: DueStatus = diff >= -45 && diff <= 120 ? 'due_now' : (diff > 120 ? 'overdue' : 'upcoming');
+    const handled = isHandledToday('default-daily-exercise');
+    const dueStatus: DueStatus = handled 
+      ? 'completed' 
+      : (diff >= -45 && diff <= 120 ? 'due_now' : (diff > 120 ? 'overdue' : 'upcoming'));
 
     reminders.push({
       id: 'default-daily-exercise',
       type: 'exercise',
       title: 'Daily Mobility & Physical Activity',
-      subtitle: '15-minute gentle walk, stretching or prescribed rehabilitation',
+      subtitle: handled
+        ? 'Completed for today • Next reminder after 24 hrs'
+        : '15-minute gentle walk, stretching or prescribed rehabilitation',
       time: defaultExerciseTime,
       targetTimeFormatted: `Today at ${defaultExerciseTime}`,
       dueStatus,
-      urgency: 'medium',
+      urgency: handled ? 'low' : 'medium',
       metadata: {
         durationMinutes: 15,
         guidance: 'Light stretching or walking helps regulate blood pressure, insulin, and circulation.'
       },
-      actionLabel: 'Mark Exercise Done',
-      isCompleted: false
+      actionLabel: handled ? 'Completed' : 'Mark Exercise Done',
+      isCompleted: handled
     });
   }
 
@@ -290,6 +312,8 @@ export function calculateActiveReminders(
       const aptDate = apt.date; // YYYY-MM-DD
       const aptTime = apt.time || '09:00';
       const isToday = aptDate === todayStr;
+      const reminderId = `apt-${apt.id}`;
+      const handled = isHandledToday(reminderId);
 
       // Calculate days difference
       const aptDateTime = new Date(`${aptDate}T${aptTime}:00`);
@@ -297,36 +321,40 @@ export function calculateActiveReminders(
       const diffMs = aptDateTime.getTime() - nowTime.getTime();
       const diffHours = diffMs / (1000 * 60 * 60);
 
-      let dueStatus: DueStatus = 'upcoming';
+      let dueStatus: DueStatus = handled ? 'completed' : 'upcoming';
       let urgency: 'high' | 'medium' | 'low' = 'medium';
 
-      if (diffHours < 0 && isToday) {
-        dueStatus = 'due_now';
-        urgency = 'high';
-      } else if (diffHours >= 0 && diffHours <= 3) {
-        dueStatus = 'due_now';
-        urgency = 'high';
-      } else if (diffHours > 3 && diffHours <= 48) {
-        dueStatus = 'upcoming';
-        urgency = 'high';
+      if (!handled) {
+        if (diffHours < 0 && isToday) {
+          dueStatus = 'due_now';
+          urgency = 'high';
+        } else if (diffHours >= 0 && diffHours <= 3) {
+          dueStatus = 'due_now';
+          urgency = 'high';
+        } else if (diffHours > 3 && diffHours <= 48) {
+          dueStatus = 'upcoming';
+          urgency = 'high';
+        }
       }
 
       reminders.push({
-        id: `apt-${apt.id}`,
+        id: reminderId,
         type: 'appointment',
         title: `Consultation at ${apt.facilityName}`,
-        subtitle: `With ${apt.providerName || 'Healthcare Provider'} • ${apt.reason || 'Medical Consultation'}`,
+        subtitle: handled
+          ? `With ${apt.providerName || 'Healthcare Provider'} • Acknowledged for today (Next in 24 hrs)`
+          : `With ${apt.providerName || 'Healthcare Provider'} • ${apt.reason || 'Medical Consultation'}`,
         time: aptTime,
         targetTimeFormatted: isToday ? `Today at ${aptTime}` : `${aptDate} at ${aptTime}`,
         dueStatus,
-        urgency,
+        urgency: handled ? 'low' : urgency,
         metadata: {
           appointmentId: apt.id,
           facilityName: apt.facilityName,
           doctorName: apt.providerName
         },
-        actionLabel: 'View Appointment',
-        isCompleted: false
+        actionLabel: handled ? 'Acknowledged' : 'View Appointment',
+        isCompleted: handled
       });
     });
 
@@ -338,13 +366,15 @@ export function calculateActiveReminders(
   generalTasks.forEach(task => {
     const taskMinutes = parseTimeToMinutes(task.timeOfDay || '12:00');
     const diffMinutes = currentMinutes - taskMinutes;
+    const reminderId = `task-${task.id}`;
+    const handled = task.completed || isHandledToday(reminderId);
 
-    let dueStatus: DueStatus = task.completed ? 'completed' : 'upcoming';
+    let dueStatus: DueStatus = handled ? 'completed' : 'upcoming';
     let urgency: 'high' | 'medium' | 'low' = 'medium';
     let isMissed = false;
     let missedMinutesAgo = 0;
 
-    if (!task.completed) {
+    if (!handled) {
       if (diffMinutes > 60) {
         dueStatus = 'missed';
         urgency = 'high';
@@ -357,24 +387,26 @@ export function calculateActiveReminders(
     }
 
     reminders.push({
-      id: `task-${task.id}`,
+      id: reminderId,
       type: 'task',
       title: isMissed ? `Missed Task: ${task.title}` : task.title,
-      subtitle: isMissed
-        ? `⚠️ Missed by ${Math.floor(missedMinutesAgo / 60) > 0 ? `${Math.floor(missedMinutesAgo / 60)}h ` : ''}${missedMinutesAgo % 60}m • Scheduled for ${task.timeOfDay || '12:00'}`
-        : `Care Plan Task • Assigned to ${task.assignedTo || 'Patient/Caregiver'}`,
+      subtitle: handled
+        ? `Scheduled: ${task.timeOfDay || 'Today'} • Completed for today (Next reminder in 24 hrs)`
+        : isMissed 
+        ? `⚠️ Missed by ${Math.floor(missedMinutesAgo / 60) > 0 ? `${Math.floor(missedMinutesAgo / 60)}h ` : ''}${missedMinutesAgo % 60}m • Scheduled for ${task.timeOfDay || 'Today'}`
+        : `Scheduled: ${task.timeOfDay || 'Today'} • ${task.category.toUpperCase()}`,
       time: task.timeOfDay || '12:00',
       targetTimeFormatted: `Today at ${task.timeOfDay || '12:00'}`,
       dueStatus,
       isMissed,
       missedMinutesAgo,
-      urgency,
+      urgency: handled ? 'low' : urgency,
       metadata: {
         taskId: task.id,
         category: task.category
       },
-      actionLabel: task.completed ? 'Completed' : isMissed ? 'Mark Missed Task Done' : 'Mark Task Complete',
-      isCompleted: task.completed
+      actionLabel: handled ? 'Completed' : isMissed ? 'Mark Missed Done' : 'Complete Task',
+      isCompleted: handled
     });
   });
 
